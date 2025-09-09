@@ -26,6 +26,7 @@ const fragmentShader = `
     uniform float uThresholdOutline;
 
     uniform bool uCleanPixels;
+    uniform float uCleanupThreshold;
 
     // Palette based on the new source image
     const vec3 PALETTE_FACE    = vec3(1.0, 1.0, 0.0); // Yellow
@@ -40,52 +41,36 @@ const fragmentShader = `
         if (uCleanPixels) {
             vec2 onePixel = 1.0 / uResolution;
 
-            // Sample 8 neighbors
-            vec4 neighbors[8];
-            neighbors[0] = texture2D(uTexture, vUv + vec2(-onePixel.x, -onePixel.y));
-            neighbors[1] = texture2D(uTexture, vUv + vec2( 0.0,       -onePixel.y));
-            neighbors[2] = texture2D(uTexture, vUv + vec2( onePixel.x, -onePixel.y));
-            neighbors[3] = texture2D(uTexture, vUv + vec2(-onePixel.x,  0.0));
-            neighbors[4] = texture2D(uTexture, vUv + vec2( onePixel.x,  0.0));
-            neighbors[5] = texture2D(uTexture, vUv + vec2(-onePixel.x,  onePixel.y));
-            neighbors[6] = texture2D(uTexture, vUv + vec2( 0.0,        onePixel.y));
-            neighbors[7] = texture2D(uTexture, vUv + vec2( onePixel.x,  onePixel.y));
-
-            // --- Step 1: Remove stray pixels outside the main silhouette ---
-            int opaqueNeighbors = 0;
-            bool nearOutline = false;
-            for (int i = 0; i < 8; i++) {
-                if (neighbors[i].a > 0.5) {
-                    opaqueNeighbors++;
-                    // Check if any neighbor is an outline color
-                    if (distance(neighbors[i].rgb, PALETTE_OUTLINE) < 0.1) {
-                        nearOutline = true;
-                    }
+            // Step 1: Remove stray pixels outside the main silhouette using a larger kernel (5x5 box blur on alpha)
+            // This is more robust against small clusters of stray pixels.
+            float surroundingAlpha = 0.0;
+            for (int i = -2; i <= 2; i++) {
+                for (int j = -2; j <= 2; j++) {
+                    surroundingAlpha += texture2D(uTexture, vUv + vec2(float(i) * onePixel.x, float(j) * onePixel.y)).a;
                 }
             }
+            surroundingAlpha /= 25.0; // Average alpha in a 5x5 grid
 
-            // A pixel is considered "outside" if it's opaque but has few opaque neighbors.
-            // This removes isolated pixels and small clusters.
-            // Also, if a non-outline pixel is not near an outline pixel, it may be stray.
-            // The outline itself can exist with few neighbors (e.g., at the tip of the axe).
-            bool isOutline = distance(texColor.rgb, PALETTE_OUTLINE) < 0.1;
-            
-            // Condition 1: Too few neighbors (removes specs)
-            bool isIsolated = opaqueNeighbors <= 2 && !isOutline;
-
-            // Condition 2: Not near the outline (removes floating shapes)
-            // If a pixel isn't the outline, and none of its neighbors are the outline, it could be a stray shape.
-            // This is a simple heuristic.
-            bool isFloating = !isOutline && !nearOutline;
-
-            if (texColor.a > 0.5 && isIsolated) {
+            // If the average alpha around a pixel is below the threshold, it's likely a stray pixel or a very thin line.
+            // We make it transparent.
+            if (surroundingAlpha < uCleanupThreshold) {
                 texColor.a = 0.0;
             }
 
-
-            // --- Step 2: Merge stray pixels inside the silhouette ---
+            // Step 2: Merge stray pixels inside the silhouette
             if (texColor.a > 0.5) {
-                // This logic remains to clean up internal noise.
+                vec4 neighbors[8];
+                neighbors[0] = texture2D(uTexture, vUv + vec2(-onePixel.x, -onePixel.y));
+                neighbors[1] = texture2D(uTexture, vUv + vec2( 0.0,       -onePixel.y));
+                neighbors[2] = texture2D(uTexture, vUv + vec2( onePixel.x, -onePixel.y));
+                neighbors[3] = texture2D(uTexture, vUv + vec2(-onePixel.x,  0.0));
+                neighbors[4] = texture2D(uTexture, vUv + vec2( onePixel.x,  0.0));
+                neighbors[5] = texture2D(uTexture, vUv + vec2(-onePixel.x,  onePixel.y));
+                neighbors[6] = texture2D(uTexture, vUv + vec2( 0.0,        onePixel.y));
+                neighbors[7] = texture2D(uTexture, vUv + vec2( onePixel.x,  onePixel.y));
+
+                // If a pixel is different from most of its neighbors, it's a stray pixel inside.
+                // Replace it with the color of the first opaque neighbor we find.
                 int differentNeighbors = 0;
                 vec3 replacementColor = texColor.rgb;
                 bool foundReplacement = false;
@@ -102,6 +87,8 @@ const fragmentShader = `
                     }
                 }
                 
+                // If the pixel is different from at least 3 of its opaque neighbors, replace it.
+                // This is a simple heuristic for being the "odd one out".
                 if (foundReplacement && differentNeighbors >= 3) {
                     texColor.rgb = replacementColor;
                 }
@@ -189,6 +176,7 @@ const shaderMaterial = new THREE.ShaderMaterial({
         uThresholdHair: { value: 1.0 },
         uThresholdOutline: { value: 1.0 },
         uCleanPixels: { value: true },
+        uCleanupThreshold: { value: 0.4 },
     },
     vertexShader,
     fragmentShader,
@@ -256,13 +244,24 @@ for (const [id, uniformName] of Object.entries(thresholdMappings)) {
 
 // Connect pixel cleanup toggle
 const cleanPixelsToggle = document.getElementById('clean-pixels-toggle');
+const cleanupSliderContainer = document.getElementById('cleanup-slider-container');
 cleanPixelsToggle.addEventListener('change', (event) => {
     shaderMaterial.uniforms.uCleanPixels.value = event.target.checked;
+    cleanupSliderContainer.style.display = event.target.checked ? 'flex' : 'none';
+});
+
+// Connect pixel cleanup threshold slider
+const cleanupThresholdSlider = document.getElementById('cleanup-threshold-slider');
+const cleanupThresholdValue = document.getElementById('cleanup-threshold-value');
+cleanupThresholdSlider.addEventListener('input', (event) => {
+    const threshold = parseFloat(event.target.value);
+    shaderMaterial.uniforms.uCleanupThreshold.value = threshold;
+    cleanupThresholdValue.textContent = threshold.toFixed(2);
 });
 
 // Remove old global slider logic if it's still there
 const oldSliderControl = document.querySelector('.slider-control');
-if (oldSliderControl && oldSliderControl.style.display !== 'none') {
+if (oldSliderControl && oldSliderControl.style.display !== 'none' && !oldSliderControl.id) {
     oldSliderControl.style.display = 'none';
 }
 
