@@ -43,60 +43,141 @@ const fragmentShader = `
         vec4 texColor = texture2D(uTexture, vUv);
 
         if (uCleanPixels) {
-            // New, more robust pixel cleaning algorithm.
-            // The goal is to identify the largest contiguous area of opaque pixels (the "main body")
-            // and make everything else transparent. This is done by checking the density of opaque
-            // pixels in a large neighborhood. Pixels in sparse regions are considered "stray".
+            // STEP 1: Perform a morphological opening (erosion then dilation)
+            // We use 3 passes of erosion to remove noise, then 3 passes of dilation
+            // to restore the original shape. This is effective at removing small islands of pixels.
+            
+            // --- EROSION ---
+            float alpha = getAlpha(vUv);
 
-            // Use a large kernel (e.g., 15x15) to check the neighborhood density.
-            const int kernelRadius = 7;
-            float surroundingAlphaCount = 0.0;
-            float totalSamples = 0.0;
-
-            for (int i = -kernelRadius; i <= kernelRadius; i++) {
-                for (int j = -kernelRadius; j <= kernelRadius; j++) {
-                    // Using a circular kernel is slightly more accurate for distance-based checks.
-                    if (float(i*i + j*j) <= float(kernelRadius * kernelRadius)) {
-                        vec2 offset = vec2(float(i), float(j));
-                        // step(0.5, ...) counts pixels that are mostly opaque as 1, others as 0.
-                        surroundingAlphaCount += step(0.5, getAlpha(vUv + onePixel * offset));
-                        totalSamples += 1.0;
-                    }
+            // Pass 1
+            float eroded1 = 1.0;
+            if (alpha < 0.5) {
+                eroded1 = 0.0;
+            } else {
+                for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
+                    if (getAlpha(vUv + onePixel * vec2(i, j)) < 0.5) eroded1 = 0.0;
                 }
             }
 
-            // Calculate the density of opaque pixels in the neighborhood.
-            float density = surroundingAlphaCount / totalSamples;
+            // Pass 2
+            float eroded2 = 1.0;
+            if (eroded1 < 0.5) {
+                eroded2 = 0.0;
+            } else {
+                for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
+                    vec2 neighborUv = vUv + onePixel * vec2(i, j);
+                    bool neighborSurvived = true;
+                    for (int ni = -1; ni <= 1; ni++) for (int nj = -1; nj <= 1; nj++) {
+                        if (getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) neighborSurvived = false;
+                    }
+                    if (!neighborSurvived) eroded2 = 0.0;
+                }
+            }
 
-            // A pixel must be opaque itself AND be in a sufficiently dense area to be kept.
-            // The density threshold (0.1 here) is chosen to be low enough to preserve thin parts
-            // of the character (like the axe handle) but high enough to eliminate sparse stray pixels.
-            if (texColor.a > 0.5 && density < 0.1) {
-                texColor.a = 0.0; // This is a stray pixel, make it transparent.
+            // Pass 3
+            float eroded3 = 1.0;
+            if (eroded2 < 0.5) {
+                eroded3 = 0.0;
+            } else {
+                // This is a simplified check. A full check is too expensive.
+                // We check if the immediate 3x3 neighbors would have survived two passes.
+                // This is a good approximation.
+                for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
+                     vec2 neighborUv = vUv + onePixel * vec2(i, j);
+                     // Check if neighbor would survive pass 2
+                     bool neighborSurvivedP2 = true;
+                     for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                         vec2 n2_uv = neighborUv + onePixel * vec2(ni, nj);
+                         bool n2_survivedP1 = true;
+                         for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
+                            if(getAlpha(n2_uv + onePixel * vec2(nni, nnj)) < 0.5) n2_survivedP1 = false;
+                         }
+                         if(!n2_survivedP1) neighborSurvivedP2 = false;
+                     }
+                     if(!neighborSurvivedP2) eroded3 = 0.0;
+                }
+            }
+
+            // --- DILATION ---
+            // Now we dilate the result of the erosion
+            
+            // Pass 1
+            float dilated1 = 0.0;
+            if (eroded3 > 0.5) {
+                dilated1 = 1.0;
+            } else {
+                for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
+                    // Check if neighbor would have survived erosion
+                    // Using the same approximation as above
+                    vec2 neighborUv = vUv + onePixel * vec2(i, j);
+                    if (texture2D(uTexture, neighborUv).a > 0.5) { // Optimization: quick check
+                        bool neighborSurvivedP2 = true;
+                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                             vec2 n2_uv = neighborUv + onePixel * vec2(ni, nj);
+                             bool n2_survivedP1 = true;
+                             for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
+                                if(getAlpha(n2_uv + onePixel * vec2(nni, nnj)) < 0.5) n2_survivedP1 = false;
+                             }
+                             if(!n2_survivedP1) neighborSurvivedP2 = false;
+                        }
+                        if(neighborSurvivedP2) dilated1 = 1.0;
+                    }
+                }
             }
             
-            // This second step cleans up internal "salt and pepper" noise.
-            // If a pixel *was* made transparent by the above step (or was already transparent),
-            // but it's surrounded by opaque pixels, it's likely an unwanted hole. We fill it.
-            if (texColor.a < 0.5 && density > 0.8) {
+            // Pass 2 & 3 (Simplified for performance)
+            // A full multi-pass dilation is very expensive. We can approximate by checking a larger area.
+            float finalAlpha = 0.0;
+            if (dilated1 > 0.5) {
+                finalAlpha = 1.0;
+            } else {
+                for (int i = -2; i <= 2; i++) for (int j = -2; j <= 2; j++) {
+                    if (i == 0 && j == 0) continue;
+                    vec2 neighborUv = vUv + onePixel * vec2(i, j);
+                     if (texture2D(uTexture, neighborUv).a > 0.5) {
+                         bool neighborSurvivedP1 = true;
+                         for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                             if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) neighborSurvivedP1 = false;
+                         }
+                         if(neighborSurvivedP1) finalAlpha = 1.0; // If a nearby pixel survives 1 erosion, it's likely part of main body
+                     }
+                }
+            }
+
+            // Apply the cleaned alpha mask
+            texColor.a = finalAlpha;
+            
+            // STEP 2: Clean up internal stray pixels using the new clean mask
+            if (texColor.a > 0.5) {
                 vec3 dominantColor = vec3(0.0);
                 float maxCount = 0.0;
                 
-                // Find dominant color in a small 3x3 neighborhood to fill the hole.
+                // Find dominant color in 3x3 neighborhood to fill holes
                 for (int i = -1; i <= 1; i++) {
                     for (int j = -1; j <= 1; j++) {
                         vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
                         vec4 neighborColor = texture2D(uTexture, neighborUv);
-                        if (neighborColor.a > 0.5) { // Only consider opaque neighbors
-                            dominantColor += neighborColor.rgb; // Simple average
-                            maxCount += 1.0;
+                        if (neighborColor.a > 0.5) {
+                            float currentCount = 0.0;
+                            for (int k = -1; k <= 1; k++) {
+                                for (int l = -1; l <= 1; l++) {
+                                     vec4 sampleColor = texture2D(uTexture, neighborUv + onePixel * vec2(float(k), float(l)));
+                                     if (sampleColor.a > 0.5 && distance(neighborColor.rgb, sampleColor.rgb) < 0.1) {
+                                         currentCount += 1.0;
+                                     }
+                                }
+                            }
+                            if (currentCount > maxCount) {
+                                maxCount = currentCount;
+                                dominantColor = neighborColor.rgb;
+                            }
                         }
                     }
                 }
-
+                 // Only overwrite if a dominant color was found
                 if (maxCount > 0.0) {
-                    texColor.rgb = dominantColor / maxCount;
-                    texColor.a = 1.0; // Fill the hole
+                    texColor.rgb = dominantColor;
                 }
             }
         }
