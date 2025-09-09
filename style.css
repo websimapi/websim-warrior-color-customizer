@@ -95,6 +95,26 @@ p {
 
 .color-control label {
     font-weight: 500;
+    flex-shrink: 0;
+    margin-right: 10px;
+}
+
+.input-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.input-group input[type="range"] {
+    flex-grow: 1;
+}
+
+.input-group .threshold-value {
+    font-variant-numeric: tabular-nums;
+    min-width: 35px;
+    text-align: right;
 }
 
 .color-control input[type="color"] {

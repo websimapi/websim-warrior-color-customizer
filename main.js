@@ -20,7 +20,15 @@ const fragmentShader = `
     uniform vec3 uColorMagenta;
     uniform vec3 uColorWhite;
     uniform vec3 uColorBlack;
-    uniform float uThreshold;
+
+    uniform float uThresholdRed;
+    uniform float uThresholdGreen;
+    uniform float uThresholdBlue;
+    uniform float uThresholdYellow;
+    uniform float uThresholdCyan;
+    uniform float uThresholdMagenta;
+    uniform float uThresholdWhite;
+    uniform float uThresholdBlack;
 
     const vec3 PALETTE_RED     = vec3(1.0, 0.0, 0.0);
     const vec3 PALETTE_GREEN   = vec3(0.0, 1.0, 0.0);
@@ -40,21 +48,42 @@ const fragmentShader = `
 
         vec3 finalColor = texColor.rgb;
 
-        if (distance(texColor.rgb, PALETTE_RED) < uThreshold) {
+        float distRed = distance(texColor.rgb, PALETTE_RED);
+        float distGreen = distance(texColor.rgb, PALETTE_GREEN);
+        float distBlue = distance(texColor.rgb, PALETTE_BLUE);
+        float distYellow = distance(texColor.rgb, PALETTE_YELLOW);
+        float distCyan = distance(texColor.rgb, PALETTE_CYAN);
+        float distMagenta = distance(texColor.rgb, PALETTE_MAGENTA);
+        float distWhite = distance(texColor.rgb, PALETTE_WHITE);
+        float distBlack = distance(texColor.rgb, PALETTE_BLACK);
+        
+        float min_dist = 10.0;
+        int min_idx = -1;
+
+        if (distRed < min_dist) { min_dist = distRed; min_idx = 0; }
+        if (distGreen < min_dist) { min_dist = distGreen; min_idx = 1; }
+        if (distBlue < min_dist) { min_dist = distBlue; min_idx = 2; }
+        if (distYellow < min_dist) { min_dist = distYellow; min_idx = 3; }
+        if (distCyan < min_dist) { min_dist = distCyan; min_idx = 4; }
+        if (distMagenta < min_dist) { min_dist = distMagenta; min_idx = 5; }
+        if (distWhite < min_dist) { min_dist = distWhite; min_idx = 6; }
+        if (distBlack < min_dist) { min_dist = distBlack; min_idx = 7; }
+
+        if (min_idx == 0 && min_dist < uThresholdRed) {
             finalColor = uColorRed;
-        } else if (distance(texColor.rgb, PALETTE_GREEN) < uThreshold) {
+        } else if (min_idx == 1 && min_dist < uThresholdGreen) {
             finalColor = uColorGreen;
-        } else if (distance(texColor.rgb, PALETTE_BLUE) < uThreshold) {
+        } else if (min_idx == 2 && min_dist < uThresholdBlue) {
             finalColor = uColorBlue;
-        } else if (distance(texColor.rgb, PALETTE_YELLOW) < uThreshold) {
+        } else if (min_idx == 3 && min_dist < uThresholdYellow) {
             finalColor = uColorYellow;
-        } else if (distance(texColor.rgb, PALETTE_CYAN) < uThreshold) {
+        } else if (min_idx == 4 && min_dist < uThresholdCyan) {
             finalColor = uColorCyan;
-        } else if (distance(texColor.rgb, PALETTE_MAGENTA) < uThreshold) {
+        } else if (min_idx == 5 && min_dist < uThresholdMagenta) {
             finalColor = uColorMagenta;
-        } else if (distance(texColor.rgb, PALETTE_WHITE) < uThreshold) {
+        } else if (min_idx == 6 && min_dist < uThresholdWhite) {
             finalColor = uColorWhite;
-        } else if (distance(texColor.rgb, PALETTE_BLACK) < uThreshold) {
+        } else if (min_idx == 7 && min_dist < uThresholdBlack) {
             finalColor = uColorBlack;
         }
 
@@ -89,7 +118,14 @@ const shaderMaterial = new THREE.ShaderMaterial({
         uColorMagenta: { value: new THREE.Color('#FF00FF') },
         uColorWhite: { value: new THREE.Color('#FFFFFF') },
         uColorBlack: { value: new THREE.Color('#000000') },
-        uThreshold: { value: 0.4 },
+        uThresholdRed: { value: 0.4 },
+        uThresholdGreen: { value: 0.4 },
+        uThresholdBlue: { value: 0.4 },
+        uThresholdYellow: { value: 0.4 },
+        uThresholdCyan: { value: 0.4 },
+        uThresholdMagenta: { value: 0.4 },
+        uThresholdWhite: { value: 0.4 },
+        uThresholdBlack: { value: 0.4 },
     },
     vertexShader,
     fragmentShader,
@@ -137,15 +173,35 @@ for (const [id, uniformName] of Object.entries(colorMappings)) {
     });
 }
 
-// Connect slider control
-const thresholdSlider = document.getElementById('threshold-slider');
-const thresholdValueSpan = document.getElementById('threshold-value');
+// Connect individual slider controls
+const thresholdMappings = {
+    'threshold-red': 'uThresholdRed',
+    'threshold-green': 'uThresholdGreen',
+    'threshold-blue': 'uThresholdBlue',
+    'threshold-yellow': 'uThresholdYellow',
+    'threshold-cyan': 'uThresholdCyan',
+    'threshold-magenta': 'uThresholdMagenta',
+    'threshold-white': 'uThresholdWhite',
+    'threshold-black': 'uThresholdBlack',
+};
 
-thresholdSlider.addEventListener('input', (event) => {
-    const threshold = parseFloat(event.target.value);
-    shaderMaterial.uniforms.uThreshold.value = threshold;
-    thresholdValueSpan.textContent = threshold.toFixed(2);
-});
+for (const [id, uniformName] of Object.entries(thresholdMappings)) {
+    const slider = document.getElementById(id);
+    const valueSpan = document.getElementById(`threshold-value-${id.split('-')[1]}`);
+    slider.addEventListener('input', (event) => {
+        const threshold = parseFloat(event.target.value);
+        shaderMaterial.uniforms[uniformName].value = threshold;
+        if (valueSpan) {
+            valueSpan.textContent = threshold.toFixed(2);
+        }
+    });
+}
+
+// Remove old global slider logic
+const oldSliderControl = document.querySelector('.slider-control');
+if (oldSliderControl) {
+    oldSliderControl.style.display = 'none';
+}
 
 // Animation loop
 function animate() {
