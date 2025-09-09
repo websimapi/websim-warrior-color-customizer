@@ -35,10 +35,6 @@ const fragmentShader = `
     const vec3 PALETTE_OUTLINE = vec3(0.0, 0.0, 0.0); // Black
 
     float getAlpha(vec2 uv) {
-        // Clamp UVs to avoid reading outside the texture
-        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-            return 0.0;
-        }
         return texture2D(uTexture, uv).a;
     }
 
@@ -47,86 +43,60 @@ const fragmentShader = `
         vec4 texColor = texture2D(uTexture, vUv);
 
         if (uCleanPixels) {
-            // New Algorithm: Flood fill from outside
-            // This algorithm determines if a pixel is "outside" by checking if it has a clear path
-            // to a large area of transparent pixels, effectively flood-filling the background.
-            // A pixel is considered outside if its 'outsideScore' is high.
+            // New, more robust pixel cleaning algorithm.
+            // The goal is to identify the largest contiguous area of opaque pixels (the "main body")
+            // and make everything else transparent. This is done by checking the density of opaque
+            // pixels in a large neighborhood. Pixels in sparse regions are considered "stray".
 
-            float outsideScore = 0.0;
-            const int SAMPLES = 16; // Number of directions to check
-            const float STEP_SIZE = 4.0; // How many pixels to step each time
-            const int MAX_STEPS = 15; // How far to check outwards
+            // Use a large kernel (e.g., 15x15) to check the neighborhood density.
+            const int kernelRadius = 7;
+            float surroundingAlphaCount = 0.0;
+            float totalSamples = 0.0;
 
-            for (int i = 0; i < SAMPLES; i++) {
-                float angle = float(i) / float(SAMPLES) * 2.0 * 3.14159;
-                vec2 direction = vec2(cos(angle), sin(angle));
-                
-                int consecutiveTransparentSteps = 0;
-                for (int j = 1; j <= MAX_STEPS; j++) {
-                    vec2 sampleUv = vUv + direction * float(j) * STEP_SIZE * onePixel;
-                    
-                    if (getAlpha(sampleUv) < 0.1) {
-                        consecutiveTransparentSteps++;
-                    } else {
-                        consecutiveTransparentSteps = 0; // Reset if we hit a non-transparent pixel
-                    }
-
-                    // If we find a solid run of transparent pixels, we can be confident this path leads outside.
-                    if (consecutiveTransparentSteps >= 3) {
-                        outsideScore += 1.0;
-                        break; // No need to check further in this direction
+            for (int i = -kernelRadius; i <= kernelRadius; i++) {
+                for (int j = -kernelRadius; j <= kernelRadius; j++) {
+                    // Using a circular kernel is slightly more accurate for distance-based checks.
+                    if (float(i*i + j*j) <= float(kernelRadius * kernelRadius)) {
+                        vec2 offset = vec2(float(i), float(j));
+                        // step(0.5, ...) counts pixels that are mostly opaque as 1, others as 0.
+                        surroundingAlphaCount += step(0.5, getAlpha(vUv + onePixel * offset));
+                        totalSamples += 1.0;
                     }
                 }
             }
-            
-            // Normalize the score
-            outsideScore /= float(SAMPLES);
 
-            // If a pixel has a clear path to the outside in most directions, make it transparent.
-            // A threshold of 0.4 means more than 40% of the checked paths lead to transparency.
-            if (outsideScore > 0.4) {
-                texColor.a = 0.0;
+            // Calculate the density of opaque pixels in the neighborhood.
+            float density = surroundingAlphaCount / totalSamples;
+
+            // A pixel must be opaque itself AND be in a sufficiently dense area to be kept.
+            // The density threshold (0.1 here) is chosen to be low enough to preserve thin parts
+            // of the character (like the axe handle) but high enough to eliminate sparse stray pixels.
+            if (texColor.a > 0.5 && density < 0.1) {
+                texColor.a = 0.0; // This is a stray pixel, make it transparent.
             }
-
-
-            // STEP 2: Clean up internal stray pixels using the new clean mask
-            if (texColor.a > 0.5) { // Only process pixels that are part of the character
+            
+            // This second step cleans up internal "salt and pepper" noise.
+            // If a pixel *was* made transparent by the above step (or was already transparent),
+            // but it's surrounded by opaque pixels, it's likely an unwanted hole. We fill it.
+            if (texColor.a < 0.5 && density > 0.8) {
                 vec3 dominantColor = vec3(0.0);
                 float maxCount = 0.0;
                 
-                // If the current pixel is transparent in the original texture, it's a hole.
-                // Find the dominant color in its 3x3 neighborhood to fill it.
-                if (texture2D(uTexture, vUv).a < 0.1) {
-                    for (int i = -1; i <= 1; i++) {
-                        for (int j = -1; j <= 1; j++) {
-                            if (i == 0 && j == 0) continue; // Skip self
-
-                            vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
-                            vec4 neighborColor = texture2D(uTexture, neighborUv);
-
-                            // Only consider neighbors that are part of the character
-                            if (neighborColor.a > 0.5) {
-                                float currentCount = 1.0;
-                                // Check *their* neighbors to see how solid this color region is
-                                for (int k = -1; k <= 1; k++) {
-                                    for (int l = -1; l <= 1; l++) {
-                                        vec4 sampleColor = texture2D(uTexture, neighborUv + onePixel * vec2(float(k), float(l)));
-                                        if (sampleColor.a > 0.5 && distance(neighborColor.rgb, sampleColor.rgb) < 0.1) {
-                                            currentCount += 1.0;
-                                        }
-                                    }
-                                }
-                                if (currentCount > maxCount) {
-                                    maxCount = currentCount;
-                                    dominantColor = neighborColor.rgb;
-                                }
-                            }
+                // Find dominant color in a small 3x3 neighborhood to fill the hole.
+                for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+                        vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
+                        vec4 neighborColor = texture2D(uTexture, neighborUv);
+                        if (neighborColor.a > 0.5) { // Only consider opaque neighbors
+                            dominantColor += neighborColor.rgb; // Simple average
+                            maxCount += 1.0;
                         }
                     }
-                    // Only overwrite if a dominant color was found
-                    if (maxCount > 0.0) {
-                        texColor.rgb = dominantColor;
-                    }
+                }
+
+                if (maxCount > 0.0) {
+                    texColor.rgb = dominantColor / maxCount;
+                    texColor.a = 1.0; // Fill the hole
                 }
             }
         }
