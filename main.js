@@ -1,5 +1,71 @@
 import * as THREE from 'three';
 
+// Shader for Pass 1: Morphological opening to create a clean mask
+const maskShader = `
+    varying vec2 vUv;
+    uniform sampler2D uTexture;
+    uniform vec2 uResolution;
+    uniform bool uCleanPixels;
+
+    float getAlpha(vec2 uv) {
+        return texture2D(uTexture, uv).a;
+    }
+
+    void main() {
+        vec4 texColor = texture2D(uTexture, vUv);
+        if (texColor.a < 0.1 || !uCleanPixels) {
+            gl_FragColor = texColor;
+            return;
+        }
+
+        vec2 onePixel = 1.0 / uResolution;
+
+        // --- 1. Aggressive Erosion ---
+        // This removes small islands. A 5x5 kernel is used.
+        float erodedAlpha = 1.0;
+        for (int i = -2; i <= 2; i++) {
+            for (int j = -2; j <= 2; j++) {
+                if (getAlpha(vUv + onePixel * vec2(float(i), float(j))) < 0.5) {
+                    erodedAlpha = 0.0;
+                }
+            }
+        }
+
+        // --- 2. Aggressive Dilation ---
+        // This restores the shape of the main body, filling gaps.
+        float dilatedAlpha = 0.0;
+        if (erodedAlpha > 0.5) {
+            // If the pixel survived erosion, it's part of the main body, so keep it.
+            dilatedAlpha = 1.0;
+        } else {
+            // If the pixel was eroded, check its neighbors. If any neighbor
+            // would have survived erosion, this pixel should be restored.
+            for (int i = -2; i <= 2; i++) {
+                for (int j = -2; j <= 2; j++) {
+                    // We need to check if the neighbor would have survived erosion.
+                    // This requires checking the neighbor's own neighborhood.
+                    vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
+                    float neighborSurvived = 1.0;
+                    for (int ni = -2; ni <= 2; ni++) {
+                        for (int nj = -2; nj <= 2; nj++) {
+                            if (getAlpha(neighborUv + onePixel * vec2(float(ni), float(nj))) < 0.5) {
+                                neighborSurvived = 0.0;
+                            }
+                        }
+                    }
+                    if (neighborSurvived > 0.5) {
+                        dilatedAlpha = 1.0;
+                        break;
+                    }
+                }
+                if (dilatedAlpha > 0.5) break;
+            }
+        }
+        
+        gl_FragColor = vec4(texColor.rgb, dilatedAlpha);
+    }
+`;
+
 const vertexShader = `
     varying vec2 vUv;
     void main() {
@@ -8,10 +74,10 @@ const vertexShader = `
     }
 `;
 
+// Final shader for Pass 2: Color replacement
 const fragmentShader = `
     varying vec2 vUv;
-    uniform sampler2D uTexture;
-    uniform vec2 uResolution;
+    uniform sampler2D uTexture; // This will be our cleaned mask texture
     
     uniform vec3 uColorFace;
     uniform vec3 uColorArmour;
@@ -25,8 +91,6 @@ const fragmentShader = `
     uniform float uThresholdHair;
     uniform float uThresholdOutline;
 
-    uniform bool uCleanPixels;
-
     // Palette based on the new source image
     const vec3 PALETTE_FACE    = vec3(1.0, 1.0, 0.0); // Yellow
     const vec3 PALETTE_ARMOUR  = vec3(0.0, 0.0, 1.0); // Blue
@@ -34,118 +98,8 @@ const fragmentShader = `
     const vec3 PALETTE_HAIR    = vec3(1.0, 0.0, 0.0); // Red
     const vec3 PALETTE_OUTLINE = vec3(0.0, 0.0, 0.0); // Black
 
-    float getAlpha(vec2 uv) {
-        return texture2D(uTexture, uv).a;
-    }
-
     void main() {
-        vec2 onePixel = 1.0 / uResolution;
         vec4 texColor = texture2D(uTexture, vUv);
-
-        if (uCleanPixels) {
-            // STEP 1: Isolated Pixel Removal
-            // An isolated pixel is one that is opaque but has no opaque neighbors
-            // in its 3x3 grid. This is very effective at removing single-pixel noise.
-            float neighborAlphaSum = 0.0;
-            for (int i = -1; i <= 1; i++) {
-                for (int j = -1; j <= 1; j++) {
-                    // Skip the center pixel (itself)
-                    if (i == 0 && j == 0) continue; 
-                    neighborAlphaSum += getAlpha(vUv + onePixel * vec2(float(i), float(j)));
-                }
-            }
-
-            // If the pixel is opaque but has no opaque neighbors, make it transparent.
-            if (texColor.a > 0.5 && neighborAlphaSum < 0.1) {
-                texColor.a = 0.0;
-            }
-
-            // STEP 2: Morphological Opening (Erode then Dilate)
-            // This is a standard image processing technique to remove small noise
-            // while preserving the shape of larger objects.
-            
-            // --- Erode Pass ---
-            // If any neighbor is transparent, this pixel becomes transparent.
-            float erodedAlpha = 1.0;
-            for (int i = -1; i <= 1; i++) {
-                for (int j = -1; j <= 1; j++) {
-                    if (getAlpha(vUv + onePixel * vec2(float(i), float(j))) < 0.5) {
-                        erodedAlpha = 0.0;
-                    }
-                }
-            }
-
-            // --- Dilate Pass ---
-            // If this pixel was transparent after erosion, check if any of its
-            // neighbors would have been opaque. If so, restore this pixel.
-            float finalAlpha = erodedAlpha;
-            if (erodedAlpha < 0.5) {
-                for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                        vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
-                        
-                        // Check if the neighbor would have survived erosion
-                        float neighborErodedAlpha = 1.0;
-                        for(int ni = -1; ni <= 1; ni++) {
-                            for(int nj = -1; nj <= 1; nj++) {
-                                if(getAlpha(neighborUv + onePixel * vec2(float(ni), float(nj))) < 0.5) {
-                                    neighborErodedAlpha = 0.0;
-                                }
-                            }
-                        }
-                        
-                        if(neighborErodedAlpha > 0.5) {
-                            finalAlpha = 1.0;
-                        }
-                    }
-                }
-            }
-            
-            // Apply the cleaned alpha mask from both steps
-            texColor.a = min(texColor.a, finalAlpha);
-
-            // STEP 3: Clean up internal stray pixels (holes)
-            if (texColor.a > 0.5 && texture2D(uTexture, vUv).a < 0.1) {
-                vec3 dominantColor = vec3(0.0);
-                float maxCount = 0.0;
-                int contributingNeighbors = 0;
-                
-                // Find dominant color in the 3x3 neighborhood to fill holes
-                for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                        if (i == 0 && j == 0) continue;
-                        
-                        vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
-                        vec4 neighborColor = texture2D(uTexture, neighborUv);
-                        
-                        // Consider only neighbors that are part of the main shape
-                        if (neighborColor.a > 0.5) {
-                            contributingNeighbors++;
-                            float currentCount = 0.0;
-                            // Check similarity with its own local neighbors to find a stable color region
-                            for (int k = -1; k <= 1; k++) {
-                                for (int l = -1; l <= 1; l++) {
-                                     vec4 sampleColor = texture2D(uTexture, neighborUv + onePixel * vec2(float(k), float(l)));
-                                     if (sampleColor.a > 0.5 && distance(neighborColor.rgb, sampleColor.rgb) < 0.1) {
-                                         currentCount += 1.0;
-                                     }
-                                }
-                            }
-                            if (currentCount > maxCount) {
-                                maxCount = currentCount;
-                                dominantColor = neighborColor.rgb;
-                            }
-                        }
-                    }
-                }
-                
-                // Only fill the hole if it's surrounded by enough opaque pixels
-                // This prevents creating new stray pixels at the edges.
-                if (contributingNeighbors >= 3) {
-                    texColor.rgb = dominantColor;
-                }
-            }
-        }
 
         if (texColor.a < 0.1) {
             discard;
@@ -203,20 +157,37 @@ const scene = new THREE.Scene();
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
 camera.position.z = 1;
 
+// Render Target for the mask generation pass
+let maskRenderTarget = new THREE.WebGLRenderTarget(1, 1);
+
 // Texture and Material
 const textureLoader = new THREE.TextureLoader();
 const texture = textureLoader.load('warrior.png', (loadedTexture) => {
+    const { width, height } = loadedTexture.image;
     // Pass texture resolution to the shader
-    shaderMaterial.uniforms.uResolution.value.x = loadedTexture.image.width;
-    shaderMaterial.uniforms.uResolution.value.y = loadedTexture.image.height;
+    maskMaterial.uniforms.uResolution.value.set(width, height);
+    // Update render target size
+    maskRenderTarget.setSize(width, height);
 });
 texture.magFilter = THREE.NearestFilter;
 texture.minFilter = THREE.NearestFilter;
 
-const shaderMaterial = new THREE.ShaderMaterial({
+// Material for Pass 1 (Mask Generation)
+const maskMaterial = new THREE.ShaderMaterial({
     uniforms: {
         uTexture: { value: texture },
-        uResolution: { value: new THREE.Vector2(1, 1) }, // Default, will be updated on load
+        uResolution: { value: new THREE.Vector2(1, 1) },
+        uCleanPixels: { value: true },
+    },
+    vertexShader,
+    fragmentShader: maskShader,
+    transparent: true
+});
+
+// Material for Pass 2 (Final Render)
+const shaderMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+        uTexture: { value: maskRenderTarget.texture }, // Use the render target's texture
         uColorFace: { value: new THREE.Color('#FFFF00') },
         uColorArmour: { value: new THREE.Color('#0000FF') },
         uColorTrim: { value: new THREE.Color('#00FF00') },
@@ -227,7 +198,6 @@ const shaderMaterial = new THREE.ShaderMaterial({
         uThresholdTrim: { value: 1.0 },
         uThresholdHair: { value: 1.0 },
         uThresholdOutline: { value: 1.0 },
-        uCleanPixels: { value: true },
     },
     vertexShader,
     fragmentShader,
@@ -296,7 +266,7 @@ for (const [id, uniformName] of Object.entries(thresholdMappings)) {
 // Connect pixel cleanup toggle
 const cleanPixelsToggle = document.getElementById('clean-pixels-toggle');
 cleanPixelsToggle.addEventListener('change', (event) => {
-    shaderMaterial.uniforms.uCleanPixels.value = event.target.checked;
+    maskMaterial.uniforms.uCleanPixels.value = event.target.checked;
 });
 
 // Remove old global slider logic if it's still there
@@ -308,6 +278,15 @@ if (oldSliderControl && oldSliderControl.style.display !== 'none') {
 // Animation loop
 function animate() {
     requestAnimationFrame(animate);
+
+    // Pass 1: Render to our off-screen buffer to generate the clean mask
+    mesh.material = maskMaterial; // Use mask shader
+    renderer.setRenderTarget(maskRenderTarget);
+    renderer.render(scene, camera);
+
+    // Pass 2: Render to the canvas using the main shader
+    mesh.material = shaderMaterial; // Switch to final color shader
+    renderer.setRenderTarget(null); // Render to screen
     renderer.render(scene, camera);
 }
 
