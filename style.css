@@ -62,6 +62,30 @@ p {
     line-height: 1.5;
 }
 
+.slider-control {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+}
+
+.slider-control label {
+    font-weight: 500;
+    margin-right: 15px;
+    white-space: nowrap;
+}
+
+.slider-control input[type="range"] {
+    flex-grow: 1;
+}
+
+.slider-control span {
+    font-variant-numeric: tabular-nums;
+    min-width: 40px;
+    text-align: right;
+    margin-left: 15px;
+}
+
 .color-control {
     display: flex;
     justify-content: space-between;
@@ -91,4 +115,3 @@ p {
     border: 1px solid #777;
     border-radius: 4px;
 }
-

@@ -20,6 +20,7 @@ const fragmentShader = `
     uniform vec3 uColorMagenta;
     uniform vec3 uColorWhite;
     uniform vec3 uColorBlack;
+    uniform float uThreshold;
 
     const vec3 PALETTE_RED     = vec3(1.0, 0.0, 0.0);
     const vec3 PALETTE_GREEN   = vec3(0.0, 1.0, 0.0);
@@ -37,24 +38,23 @@ const fragmentShader = `
             discard;
         }
 
-        float threshold = 0.1;
         vec3 finalColor = texColor.rgb;
 
-        if (distance(texColor.rgb, PALETTE_RED) < threshold) {
+        if (distance(texColor.rgb, PALETTE_RED) < uThreshold) {
             finalColor = uColorRed;
-        } else if (distance(texColor.rgb, PALETTE_GREEN) < threshold) {
+        } else if (distance(texColor.rgb, PALETTE_GREEN) < uThreshold) {
             finalColor = uColorGreen;
-        } else if (distance(texColor.rgb, PALETTE_BLUE) < threshold) {
+        } else if (distance(texColor.rgb, PALETTE_BLUE) < uThreshold) {
             finalColor = uColorBlue;
-        } else if (distance(texColor.rgb, PALETTE_YELLOW) < threshold) {
+        } else if (distance(texColor.rgb, PALETTE_YELLOW) < uThreshold) {
             finalColor = uColorYellow;
-        } else if (distance(texColor.rgb, PALETTE_CYAN) < threshold) {
+        } else if (distance(texColor.rgb, PALETTE_CYAN) < uThreshold) {
             finalColor = uColorCyan;
-        } else if (distance(texColor.rgb, PALETTE_MAGENTA) < threshold) {
+        } else if (distance(texColor.rgb, PALETTE_MAGENTA) < uThreshold) {
             finalColor = uColorMagenta;
-        } else if (distance(texColor.rgb, PALETTE_WHITE) < threshold) {
+        } else if (distance(texColor.rgb, PALETTE_WHITE) < uThreshold) {
             finalColor = uColorWhite;
-        } else if (distance(texColor.rgb, PALETTE_BLACK) < threshold) {
+        } else if (distance(texColor.rgb, PALETTE_BLACK) < uThreshold) {
             finalColor = uColorBlack;
         }
 
@@ -89,6 +89,7 @@ const shaderMaterial = new THREE.ShaderMaterial({
         uColorMagenta: { value: new THREE.Color('#FF00FF') },
         uColorWhite: { value: new THREE.Color('#FFFFFF') },
         uColorBlack: { value: new THREE.Color('#000000') },
+        uThreshold: { value: 0.1 },
     },
     vertexShader,
     fragmentShader,
@@ -136,6 +137,16 @@ for (const [id, uniformName] of Object.entries(colorMappings)) {
     });
 }
 
+// Connect slider control
+const thresholdSlider = document.getElementById('threshold-slider');
+const thresholdValueSpan = document.getElementById('threshold-value');
+
+thresholdSlider.addEventListener('input', (event) => {
+    const threshold = parseFloat(event.target.value);
+    shaderMaterial.uniforms.uThreshold.value = threshold;
+    thresholdValueSpan.textContent = threshold.toFixed(2);
+});
+
 // Animation loop
 function animate() {
     requestAnimationFrame(animate);
@@ -147,4 +158,3 @@ const resizeObserver = new ResizeObserver(resize);
 resizeObserver.observe(container);
 resize();
 animate();
-
