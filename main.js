@@ -12,32 +12,17 @@ const fragmentShader = `
     varying vec2 vUv;
     uniform sampler2D uTexture;
     
-    uniform vec3 uColorRed;
-    uniform vec3 uColorGreen;
-    uniform vec3 uColorBlue;
-    uniform vec3 uColorYellow;
-    uniform vec3 uColorCyan;
-    uniform vec3 uColorMagenta;
-    uniform vec3 uColorWhite;
-    uniform vec3 uColorBlack;
+    uniform vec3 uColorFace;
+    uniform vec3 uColorArmour;
+    uniform vec3 uColorTrim;
 
-    uniform float uThresholdRed;
-    uniform float uThresholdGreen;
-    uniform float uThresholdBlue;
-    uniform float uThresholdYellow;
-    uniform float uThresholdCyan;
-    uniform float uThresholdMagenta;
-    uniform float uThresholdWhite;
-    uniform float uThresholdBlack;
+    uniform float uThresholdFace;
+    uniform float uThresholdArmour;
+    uniform float uThresholdTrim;
 
-    const vec3 PALETTE_RED     = vec3(1.0, 0.0, 0.0);
-    const vec3 PALETTE_GREEN   = vec3(0.0, 1.0, 0.0);
-    const vec3 PALETTE_BLUE    = vec3(0.0, 0.0, 1.0);
-    const vec3 PALETTE_YELLOW  = vec3(1.0, 1.0, 0.0);
-    const vec3 PALETTE_CYAN    = vec3(0.0, 1.0, 1.0);
-    const vec3 PALETTE_MAGENTA = vec3(1.0, 0.0, 1.0);
-    const vec3 PALETTE_WHITE   = vec3(1.0, 1.0, 1.0);
-    const vec3 PALETTE_BLACK   = vec3(0.0, 0.0, 0.0);
+    const vec3 PALETTE_FACE   = vec3(1.0, 1.0, 1.0); // White
+    const vec3 PALETTE_ARMOUR = vec3(1.0, 0.0, 0.0); // Red
+    const vec3 PALETTE_TRIM   = vec3(0.0, 0.0, 0.0); // Black
 
     void main() {
         vec4 texColor = texture2D(uTexture, vUv);
@@ -48,20 +33,15 @@ const fragmentShader = `
 
         vec3 finalColor = texColor.rgb;
 
-        float dists[8];
-        dists[0] = distance(texColor.rgb, PALETTE_RED);
-        dists[1] = distance(texColor.rgb, PALETTE_GREEN);
-        dists[2] = distance(texColor.rgb, PALETTE_BLUE);
-        dists[3] = distance(texColor.rgb, PALETTE_YELLOW);
-        dists[4] = distance(texColor.rgb, PALETTE_CYAN);
-        dists[5] = distance(texColor.rgb, PALETTE_MAGENTA);
-        dists[6] = distance(texColor.rgb, PALETTE_WHITE);
-        dists[7] = distance(texColor.rgb, PALETTE_BLACK);
+        float dists[3];
+        dists[0] = distance(texColor.rgb, PALETTE_FACE);
+        dists[1] = distance(texColor.rgb, PALETTE_ARMOUR);
+        dists[2] = distance(texColor.rgb, PALETTE_TRIM);
         
         float min_dist = 10.0;
         int min_idx = -1;
 
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 3; i++) {
             if (dists[i] < min_dist) {
                 min_dist = dists[i];
                 min_idx = i;
@@ -69,21 +49,11 @@ const fragmentShader = `
         }
 
         if (min_idx == 0) {
-            if (min_dist < uThresholdRed) finalColor = uColorRed;
+            if (min_dist < uThresholdFace) finalColor = uColorFace;
         } else if (min_idx == 1) {
-            if (min_dist < uThresholdGreen) finalColor = uColorGreen;
+            if (min_dist < uThresholdArmour) finalColor = uColorArmour;
         } else if (min_idx == 2) {
-            if (min_dist < uThresholdBlue) finalColor = uColorBlue;
-        } else if (min_idx == 3) {
-            if (min_dist < uThresholdYellow) finalColor = uColorYellow;
-        } else if (min_idx == 4) {
-            if (min_dist < uThresholdCyan) finalColor = uColorCyan;
-        } else if (min_idx == 5) {
-            if (min_dist < uThresholdMagenta) finalColor = uColorMagenta;
-        } else if (min_idx == 6) {
-            if (min_dist < uThresholdWhite) finalColor = uColorWhite;
-        } else if (min_idx == 7) {
-            if (min_dist < uThresholdBlack) finalColor = uColorBlack;
+            if (min_dist < uThresholdTrim) finalColor = uColorTrim;
         }
 
         gl_FragColor = vec4(finalColor, texColor.a);
@@ -109,22 +79,12 @@ texture.minFilter = THREE.NearestFilter;
 const shaderMaterial = new THREE.ShaderMaterial({
     uniforms: {
         uTexture: { value: texture },
-        uColorRed: { value: new THREE.Color('#FF0000') },
-        uColorGreen: { value: new THREE.Color('#00FF00') },
-        uColorBlue: { value: new THREE.Color('#0000FF') },
-        uColorYellow: { value: new THREE.Color('#FFFF00') },
-        uColorCyan: { value: new THREE.Color('#00FFFF') },
-        uColorMagenta: { value: new THREE.Color('#FF00FF') },
-        uColorWhite: { value: new THREE.Color('#FFFFFF') },
-        uColorBlack: { value: new THREE.Color('#000000') },
-        uThresholdRed: { value: 0.4 },
-        uThresholdGreen: { value: 0.4 },
-        uThresholdBlue: { value: 0.4 },
-        uThresholdYellow: { value: 0.4 },
-        uThresholdCyan: { value: 0.4 },
-        uThresholdMagenta: { value: 0.4 },
-        uThresholdWhite: { value: 0.4 },
-        uThresholdBlack: { value: 0.4 },
+        uColorFace: { value: new THREE.Color('#FFFFFF') },
+        uColorArmour: { value: new THREE.Color('#FF0000') },
+        uColorTrim: { value: new THREE.Color('#000000') },
+        uThresholdFace: { value: 0.4 },
+        uThresholdArmour: { value: 0.4 },
+        uThresholdTrim: { value: 0.4 },
     },
     vertexShader,
     fragmentShader,
@@ -155,14 +115,9 @@ function resize() {
 
 // Connect UI controls
 const colorMappings = {
-    'color-red': 'uColorRed',
-    'color-green': 'uColorGreen',
-    'color-blue': 'uColorBlue',
-    'color-yellow': 'uColorYellow',
-    'color-cyan': 'uColorCyan',
-    'color-magenta': 'uColorMagenta',
-    'color-white': 'uColorWhite',
-    'color-black': 'uColorBlack',
+    'color-face': 'uColorFace',
+    'color-armour': 'uColorArmour',
+    'color-trim': 'uColorTrim',
 };
 
 for (const [id, uniformName] of Object.entries(colorMappings)) {
@@ -174,14 +129,9 @@ for (const [id, uniformName] of Object.entries(colorMappings)) {
 
 // Connect individual slider controls
 const thresholdMappings = {
-    'threshold-red': 'uThresholdRed',
-    'threshold-green': 'uThresholdGreen',
-    'threshold-blue': 'uThresholdBlue',
-    'threshold-yellow': 'uThresholdYellow',
-    'threshold-cyan': 'uThresholdCyan',
-    'threshold-magenta': 'uThresholdMagenta',
-    'threshold-white': 'uThresholdWhite',
-    'threshold-black': 'uThresholdBlack',
+    'threshold-face': 'uThresholdFace',
+    'threshold-armour': 'uThresholdArmour',
+    'threshold-trim': 'uThresholdTrim',
 };
 
 for (const [id, uniformName] of Object.entries(thresholdMappings)) {
