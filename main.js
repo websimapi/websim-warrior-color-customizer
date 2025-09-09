@@ -15,14 +15,18 @@ const fragmentShader = `
     uniform vec3 uColorFace;
     uniform vec3 uColorArmour;
     uniform vec3 uColorTrim;
+    uniform vec3 uColorOutline;
 
     uniform float uThresholdFace;
     uniform float uThresholdArmour;
     uniform float uThresholdTrim;
+    uniform float uThresholdOutline;
 
-    const vec3 PALETTE_FACE   = vec3(1.0, 1.0, 1.0); // White
-    const vec3 PALETTE_ARMOUR = vec3(1.0, 0.0, 0.0); // Red
-    const vec3 PALETTE_TRIM   = vec3(0.0, 0.0, 0.0); // Black
+    // Palette based on the new source image
+    const vec3 PALETTE_FACE    = vec3(1.0, 1.0, 0.0); // Yellow
+    const vec3 PALETTE_ARMOUR  = vec3(0.0, 0.0, 1.0); // Blue
+    const vec3 PALETTE_TRIM    = vec3(0.0, 1.0, 0.0); // Green
+    const vec3 PALETTE_OUTLINE = vec3(0.0, 0.0, 0.0); // Black
 
     void main() {
         vec4 texColor = texture2D(uTexture, vUv);
@@ -33,15 +37,22 @@ const fragmentShader = `
 
         vec3 finalColor = texColor.rgb;
 
-        float dists[3];
-        dists[0] = distance(texColor.rgb, PALETTE_FACE);
-        dists[1] = distance(texColor.rgb, PALETTE_ARMOUR);
-        dists[2] = distance(texColor.rgb, PALETTE_TRIM);
+        vec3 colors[4];
+        colors[0] = PALETTE_FACE;
+        colors[1] = PALETTE_ARMOUR;
+        colors[2] = PALETTE_TRIM;
+        colors[3] = PALETTE_OUTLINE;
+
+        float dists[4];
+        dists[0] = distance(texColor.rgb, colors[0]);
+        dists[1] = distance(texColor.rgb, colors[1]);
+        dists[2] = distance(texColor.rgb, colors[2]);
+        dists[3] = distance(texColor.rgb, colors[3]);
         
         float min_dist = 10.0;
         int min_idx = -1;
 
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             if (dists[i] < min_dist) {
                 min_dist = dists[i];
                 min_idx = i;
@@ -54,6 +65,8 @@ const fragmentShader = `
             if (min_dist < uThresholdArmour) finalColor = uColorArmour;
         } else if (min_idx == 2) {
             if (min_dist < uThresholdTrim) finalColor = uColorTrim;
+        } else if (min_idx == 3) {
+            if (min_dist < uThresholdOutline) finalColor = uColorOutline;
         }
 
         gl_FragColor = vec4(finalColor, texColor.a);
@@ -79,12 +92,14 @@ texture.minFilter = THREE.NearestFilter;
 const shaderMaterial = new THREE.ShaderMaterial({
     uniforms: {
         uTexture: { value: texture },
-        uColorFace: { value: new THREE.Color('#FFFFFF') },
-        uColorArmour: { value: new THREE.Color('#FF0000') },
-        uColorTrim: { value: new THREE.Color('#000000') },
+        uColorFace: { value: new THREE.Color('#FFFF00') },
+        uColorArmour: { value: new THREE.Color('#0000FF') },
+        uColorTrim: { value: new THREE.Color('#00FF00') },
+        uColorOutline: { value: new THREE.Color('#000000') },
         uThresholdFace: { value: 0.4 },
         uThresholdArmour: { value: 0.4 },
         uThresholdTrim: { value: 0.4 },
+        uThresholdOutline: { value: 0.4 },
     },
     vertexShader,
     fragmentShader,
@@ -118,6 +133,7 @@ const colorMappings = {
     'color-face': 'uColorFace',
     'color-armour': 'uColorArmour',
     'color-trim': 'uColorTrim',
+    'color-outline': 'uColorOutline',
 };
 
 for (const [id, uniformName] of Object.entries(colorMappings)) {
@@ -132,6 +148,7 @@ const thresholdMappings = {
     'threshold-face': 'uThresholdFace',
     'threshold-armour': 'uThresholdArmour',
     'threshold-trim': 'uThresholdTrim',
+    'threshold-outline': 'uThresholdOutline',
 };
 
 for (const [id, uniformName] of Object.entries(thresholdMappings)) {
