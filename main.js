@@ -39,47 +39,55 @@ const fragmentShader = `
 
         if (uCleanPixels) {
             vec2 onePixel = 1.0 / uResolution;
-            
+
             // Step 1: Remove stray pixels outside the main silhouette
             float surroundingAlpha = 0.0;
-            surroundingAlpha += texture2D(uTexture, vUv + vec2(-onePixel.x, -onePixel.y)).a;
-            surroundingAlpha += texture2D(uTexture, vUv + vec2( 0.0,       -onePixel.y)).a;
-            surroundingAlpha += texture2D(uTexture, vUv + vec2( onePixel.x, -onePixel.y)).a;
-            surroundingAlpha += texture2D(uTexture, vUv + vec2(-onePixel.x,  0.0)).a;
-            surroundingAlpha += texture2D(uTexture, vUv + vec2( onePixel.x,  0.0)).a;
-            surroundingAlpha += texture2D(uTexture, vUv + vec2(-onePixel.x,  onePixel.y)).a;
-            surroundingAlpha += texture2D(uTexture, vUv + vec2( 0.0,        onePixel.y)).a;
-            surroundingAlpha += texture2D(uTexture, vUv + vec2( onePixel.x,  onePixel.y)).a;
+            vec4 neighbors[8];
+            neighbors[0] = texture2D(uTexture, vUv + vec2(-onePixel.x, -onePixel.y));
+            neighbors[1] = texture2D(uTexture, vUv + vec2( 0.0,       -onePixel.y));
+            neighbors[2] = texture2D(uTexture, vUv + vec2( onePixel.x, -onePixel.y));
+            neighbors[3] = texture2D(uTexture, vUv + vec2(-onePixel.x,  0.0));
+            neighbors[4] = texture2D(uTexture, vUv + vec2( onePixel.x,  0.0));
+            neighbors[5] = texture2D(uTexture, vUv + vec2(-onePixel.x,  onePixel.y));
+            neighbors[6] = texture2D(uTexture, vUv + vec2( 0.0,        onePixel.y));
+            neighbors[7] = texture2D(uTexture, vUv + vec2( onePixel.x,  onePixel.y));
 
-            if (texColor.a > 0.1 && surroundingAlpha < 0.8) { // if a pixel has color but its 8 neighbours are mostly transparent
-                 texColor.a = 0.0; // make it transparent
+            int opaqueNeighbors = 0;
+            for (int i = 0; i < 8; i++) {
+                if (neighbors[i].a > 0.5) {
+                    opaqueNeighbors++;
+                }
+            }
+
+            // If a pixel is opaque but has few opaque neighbors, it's a stray pixel outside.
+            if (texColor.a > 0.5 && opaqueNeighbors <= 1) {
+                texColor.a = 0.0;
             }
 
             // Step 2: Merge stray pixels inside the silhouette
-            if (texColor.a > 0.1) {
-                vec4 n_up = texture2D(uTexture, vUv + vec2(0.0, onePixel.y));
-                vec4 n_down = texture2D(uTexture, vUv - vec2(0.0, onePixel.y));
-                vec4 n_left = texture2D(uTexture, vUv - vec2(onePixel.x, 0.0));
-                vec4 n_right = texture2D(uTexture, vUv + vec2(onePixel.x, 0.0));
-                
-                // Only consider neighbors that are not transparent
-                vec3 consensusColor = vec3(0.0);
-                float count = 0.0;
-                float dist_sum = 0.0;
+            if (texColor.a > 0.5) {
+                // If a pixel is different from most of its neighbors, it's a stray pixel inside.
+                // Replace it with the color of the first opaque neighbor we find.
+                int differentNeighbors = 0;
+                vec3 replacementColor = texColor.rgb;
+                bool foundReplacement = false;
 
-                if (n_up.a > 0.5) { consensusColor += n_up.rgb; count += 1.0; dist_sum += distance(texColor.rgb, n_up.rgb); }
-                if (n_down.a > 0.5) { consensusColor += n_down.rgb; count += 1.0; dist_sum += distance(texColor.rgb, n_down.rgb); }
-                if (n_left.a > 0.5) { consensusColor += n_left.rgb; count += 1.0; dist_sum += distance(texColor.rgb, n_left.rgb); }
-                if (n_right.a > 0.5) { consensusColor += n_right.rgb; count += 1.0; dist_sum += distance(texColor.rgb, n_right.rgb); }
-
-                if (count > 2.0) { // If at least 3 neighbors are solid
-                    consensusColor /= count;
-                    float avg_dist_from_neighbors = dist_sum / count;
-
-                    // If the current pixel is an "island" of color different from its neighbors
-                    if (avg_dist_from_neighbors > 0.1 && distance(n_up.rgb, n_down.rgb) < 0.1 && distance(n_left.rgb, n_right.rgb) < 0.1) {
-                        texColor.rgb = consensusColor;
+                for (int i = 0; i < 8; i++) {
+                    if (neighbors[i].a > 0.5) {
+                        if (!foundReplacement) {
+                            replacementColor = neighbors[i].rgb;
+                            foundReplacement = true;
+                        }
+                        if (distance(texColor.rgb, neighbors[i].rgb) > 0.1) {
+                            differentNeighbors++;
+                        }
                     }
+                }
+                
+                // If the pixel is different from at least 3 of its opaque neighbors, replace it.
+                // This is a simple heuristic for being the "odd one out".
+                if (foundReplacement && differentNeighbors >= 3) {
+                    texColor.rgb = replacementColor;
                 }
             }
         }
