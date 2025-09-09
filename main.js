@@ -11,6 +11,7 @@ const vertexShader = `
 const fragmentShader = `
     varying vec2 vUv;
     uniform sampler2D uTexture;
+    uniform vec2 uResolution;
     
     uniform vec3 uColorFace;
     uniform vec3 uColorArmour;
@@ -24,6 +25,8 @@ const fragmentShader = `
     uniform float uThresholdHair;
     uniform float uThresholdOutline;
 
+    uniform bool uCleanPixels;
+
     // Palette based on the new source image
     const vec3 PALETTE_FACE    = vec3(1.0, 1.0, 0.0); // Yellow
     const vec3 PALETTE_ARMOUR  = vec3(0.0, 0.0, 1.0); // Blue
@@ -33,6 +36,51 @@ const fragmentShader = `
 
     void main() {
         vec4 texColor = texture2D(uTexture, vUv);
+
+        if (uCleanPixels) {
+            vec2 onePixel = 1.0 / uResolution;
+            
+            // Step 1: Remove stray pixels outside the main silhouette
+            float surroundingAlpha = 0.0;
+            surroundingAlpha += texture2D(uTexture, vUv + vec2(-onePixel.x, -onePixel.y)).a;
+            surroundingAlpha += texture2D(uTexture, vUv + vec2( 0.0,       -onePixel.y)).a;
+            surroundingAlpha += texture2D(uTexture, vUv + vec2( onePixel.x, -onePixel.y)).a;
+            surroundingAlpha += texture2D(uTexture, vUv + vec2(-onePixel.x,  0.0)).a;
+            surroundingAlpha += texture2D(uTexture, vUv + vec2( onePixel.x,  0.0)).a;
+            surroundingAlpha += texture2D(uTexture, vUv + vec2(-onePixel.x,  onePixel.y)).a;
+            surroundingAlpha += texture2D(uTexture, vUv + vec2( 0.0,        onePixel.y)).a;
+            surroundingAlpha += texture2D(uTexture, vUv + vec2( onePixel.x,  onePixel.y)).a;
+
+            if (texColor.a > 0.1 && surroundingAlpha < 0.8) { // if a pixel has color but its 8 neighbours are mostly transparent
+                 texColor.a = 0.0; // make it transparent
+            }
+
+            // Step 2: Merge stray pixels inside the silhouette
+            if (texColor.a > 0.1) {
+                vec4 n_up = texture2D(uTexture, vUv + vec2(0.0, onePixel.y));
+                vec4 n_down = texture2D(uTexture, vUv - vec2(0.0, onePixel.y));
+                vec4 n_left = texture2D(uTexture, vUv - vec2(onePixel.x, 0.0));
+                vec4 n_right = texture2D(uTexture, vUv + vec2(onePixel.x, 0.0));
+                
+                // Only consider neighbors that are not transparent
+                vec3 consensusColor = vec3(0.0);
+                float count = 0.0;
+
+                if (n_up.a > 0.5) { consensusColor += n_up.rgb; count += 1.0; }
+                if (n_down.a > 0.5) { consensusColor += n_down.rgb; count += 1.0; }
+                if (n_left.a > 0.5) { consensusColor += n_left.rgb; count += 1.0; }
+                if (n_right.a > 0.5) { consensusColor += n_right.rgb; count += 1.0; }
+
+                if (count > 2.0) { // If at least 3 neighbors agree
+                    consensusColor /= count;
+                    // If the current pixel is very different from its neighbors, it's a stray pixel.
+                    // Replace it with the average color of its neighbors.
+                    if (distance(texColor.rgb, consensusColor) > 0.5) {
+                        texColor.rgb = consensusColor;
+                    }
+                }
+            }
+        }
 
         if (texColor.a < 0.1) {
             discard;
@@ -92,13 +140,18 @@ camera.position.z = 1;
 
 // Texture and Material
 const textureLoader = new THREE.TextureLoader();
-const texture = textureLoader.load('warrior.png');
+const texture = textureLoader.load('warrior.png', (loadedTexture) => {
+    // Pass texture resolution to the shader
+    shaderMaterial.uniforms.uResolution.value.x = loadedTexture.image.width;
+    shaderMaterial.uniforms.uResolution.value.y = loadedTexture.image.height;
+});
 texture.magFilter = THREE.NearestFilter;
 texture.minFilter = THREE.NearestFilter;
 
 const shaderMaterial = new THREE.ShaderMaterial({
     uniforms: {
         uTexture: { value: texture },
+        uResolution: { value: new THREE.Vector2(1, 1) }, // Default, will be updated on load
         uColorFace: { value: new THREE.Color('#FFFF00') },
         uColorArmour: { value: new THREE.Color('#0000FF') },
         uColorTrim: { value: new THREE.Color('#00FF00') },
@@ -109,6 +162,7 @@ const shaderMaterial = new THREE.ShaderMaterial({
         uThresholdTrim: { value: 0.4 },
         uThresholdHair: { value: 0.4 },
         uThresholdOutline: { value: 0.4 },
+        uCleanPixels: { value: true },
     },
     vertexShader,
     fragmentShader,
@@ -173,6 +227,12 @@ for (const [id, uniformName] of Object.entries(thresholdMappings)) {
         }
     });
 }
+
+// Connect pixel cleanup toggle
+const cleanPixelsToggle = document.getElementById('clean-pixels-toggle');
+cleanPixelsToggle.addEventListener('change', (event) => {
+    shaderMaterial.uniforms.uCleanPixels.value = event.target.checked;
+});
 
 // Remove old global slider logic if it's still there
 const oldSliderControl = document.querySelector('.slider-control');

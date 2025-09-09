@@ -135,3 +135,22 @@ p {
     border: 1px solid #777;
     border-radius: 4px;
 }
+
+.toggle-control {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 25px;
+    padding-top: 15px;
+    border-top: 1px solid #4a505e;
+}
+
+.toggle-control label {
+    font-weight: 500;
+}
+
+.toggle-control input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
