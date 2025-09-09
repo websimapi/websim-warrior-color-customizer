@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Warrior Color Customizer</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container">
+            <canvas id="main-canvas"></canvas>
+        </div>
+        <div id="controls">
+            <h1>Warrior Customizer</h1>
+            <p>Change the colors of the warrior's gear. Each control targets a specific color channel from the original image.</p>
+            <div class="color-control">
+                <label for="color-red">Chestplate/Shoulders</label>
+                <input type="color" id="color-red" value="#FF0000">
+            </div>
+            <div class="color-control">
+                <label for="color-green">Boots/Greaves</label>
+                <input type="color" id="color-green" value="#00FF00">
+            </div>
+            <div class="color-control">
+                <label for="color-blue">Gauntlets</label>
+                <input type="color" id="color-blue" value="#0000FF">
+            </div>
+            <div class="color-control">
+                <label for="color-yellow">Helmet</label>
+                <input type="color" id="color-yellow" value="#FFFF00">
+            </div>
+            <div class="color-control">
+                <label for="color-cyan">Weapon Blade</label>
+                <input type="color" id="color-cyan" value="#00FFFF">
+            </div>
+            <div class="color-control">
+                <label for="color-magenta">Weapon Runes</label>
+                <input type="color" id="color-magenta" value="#FF00FF">
+            </div>
+            <div class="color-control">
+                <label for="color-white">Skin</label>
+                <input type="color" id="color-white" value="#FFFFFF">
+            </div>
+            <div class="color-control">
+                <label for="color-black">Outlines</label>
+                <input type="color" id="color-black" value="#000000">
+            </div>
+        </div>
+    </div>
+    <script type="module" src="main.js"></script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
+
