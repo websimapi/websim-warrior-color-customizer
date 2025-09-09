@@ -34,49 +34,106 @@ const fragmentShader = `
     const vec3 PALETTE_HAIR    = vec3(1.0, 0.0, 0.0); // Red
     const vec3 PALETTE_OUTLINE = vec3(0.0, 0.0, 0.0); // Black
 
+    float getAlpha(vec2 uv) {
+        return texture2D(uTexture, uv).a;
+    }
+
     void main() {
         vec2 onePixel = 1.0 / uResolution;
         vec4 texColor = texture2D(uTexture, vUv);
 
         if (uCleanPixels) {
-            // STEP 1: Perform morphological opening (erosion then dilation) to remove noise
-            // This is great for removing small stray pixels outside the main shape.
-            
-            // --- Erosion pass ---
-            // If any neighbor in a 3x3 grid is transparent, this pixel becomes transparent.
-            float erodedAlpha = 1.0;
+            // STEP 1: Perform a more aggressive morphological opening.
+            // This is two passes of erosion followed by two passes of dilation.
+            // It's effective at removing noise clusters up to 2x2 pixels.
+
+            // --- Pass 1: Erosion ---
+            float alpha1 = 1.0;
             for (int i = -1; i <= 1; i++) {
                 for (int j = -1; j <= 1; j++) {
-                    if (texture2D(uTexture, vUv + onePixel * vec2(float(i), float(j))).a < 0.5) {
-                        erodedAlpha = 0.0;
+                    if (getAlpha(vUv + onePixel * vec2(i, j)) < 0.5) {
+                        alpha1 = 0.0;
                     }
                 }
             }
 
-            // --- Dilation pass (on the eroded alpha) ---
-            // If any neighbor in the eroded mask is opaque, this pixel becomes opaque.
-            float finalAlpha = 0.0;
-            if (erodedAlpha > 0.5) {
-                finalAlpha = 1.0; // If center pixel survived erosion, it's definitely part of the final shape
+            // --- Pass 2: Erosion (on the result of Pass 1) ---
+            float alpha2 = 1.0;
+            if (alpha1 < 0.5) {
+                alpha2 = 0.0;
             } else {
-                 for (int i = -1; i <= 1; i++) {
+                for (int i = -1; i <= 1; i++) {
                     for (int j = -1; j <= 1; j++) {
-                        // Check original texture alpha to see if neighbors *were* part of a shape
-                        float neighborOriginalAlpha = texture2D(uTexture, vUv + onePixel * vec2(float(i), float(j))).a;
-                        if (neighborOriginalAlpha > 0.5) {
-                             // Now, check if that neighbor survived erosion in its own 3x3 grid
-                            float neighborErodedAlpha = 1.0;
-                            for (int ni = -1; ni <= 1; ni++) {
-                                for (int nj = -1; nj <= 1; nj++) {
-                                     vec2 neighborUV = vUv + onePixel * vec2(float(i+ni), float(j+nj));
-                                     if (texture2D(uTexture, neighborUV).a < 0.5) {
-                                         neighborErodedAlpha = 0.0;
-                                     }
+                        // Check if neighbor would have survived first erosion pass
+                        float neighborAlpha1 = 1.0;
+                        for(int ni = -1; ni <= 1; ni++) {
+                            for(int nj = -1; nj <= 1; nj++) {
+                                if(getAlpha(vUv + onePixel * vec2(i+ni, j+nj)) < 0.5) {
+                                    neighborAlpha1 = 0.0;
                                 }
                             }
-                            if (neighborErodedAlpha > 0.5) {
-                                finalAlpha = 1.0;
+                        }
+                        if (neighborAlpha1 < 0.5) {
+                            alpha2 = 0.0;
+                        }
+                    }
+                }
+            }
+
+            // --- Pass 3: Dilation (on the result of Pass 2) ---
+            float alpha3 = 0.0;
+            if(alpha2 > 0.5) {
+                alpha3 = 1.0;
+            } else {
+                for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+                         // Check if neighbor would have survived second erosion pass
+                        vec2 neighborUv = vUv + onePixel * vec2(i, j);
+                        float n_alpha1 = 1.0;
+                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                           if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) n_alpha1 = 0.0;
+                        }
+
+                        if(n_alpha1 > 0.5) {
+                            float n_alpha2 = 1.0;
+                            for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                                float nn_alpha1 = 1.0;
+                                for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
+                                    if(getAlpha(neighborUv + onePixel * vec2(ni+nni, nj+nnj)) < 0.5) nn_alpha1 = 0.0;
+                                }
+                                if(nn_alpha1 < 0.5) n_alpha2 = 0.0;
                             }
+                            if(n_alpha2 > 0.5) alpha3 = 1.0;
+                        }
+                    }
+                }
+            }
+
+             // --- Pass 4: Dilation (on the result of Pass 3) ---
+            float finalAlpha = 0.0;
+            if(alpha3 > 0.5) {
+                finalAlpha = 1.0;
+            } else {
+                // This is the most complex part. We must check if any neighbor would have survived Pass 3.
+                // A full recalculation is too expensive. We can approximate by checking if any neighbor
+                // would have survived Pass 2, which is a strong indicator.
+                 for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+                        vec2 neighborUv = vUv + onePixel * vec2(i, j);
+                        float n_alpha1 = 1.0;
+                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                           if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) n_alpha1 = 0.0;
+                        }
+                        if(n_alpha1 > 0.5) {
+                            float n_alpha2 = 1.0;
+                            for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                                float nn_alpha1 = 1.0;
+                                for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
+                                    if(getAlpha(neighborUv + onePixel * vec2(ni+nni, nj+nnj)) < 0.5) nn_alpha1 = 0.0;
+                                }
+                                if(nn_alpha1 < 0.5) n_alpha2 = 0.0;
+                            }
+                            if(n_alpha2 > 0.5) finalAlpha = 1.0; // If neighbor survives double erosion, dilate.
                         }
                     }
                 }
@@ -87,7 +144,6 @@ const fragmentShader = `
             
             // STEP 2: Clean up internal stray pixels using the new clean mask
             if (texColor.a > 0.5) {
-                int opaqueNeighbors = 0;
                 vec3 dominantColor = vec3(0.0);
                 float maxCount = 0.0;
                 
@@ -100,7 +156,8 @@ const fragmentShader = `
                             float currentCount = 0.0;
                             for (int k = -1; k <= 1; k++) {
                                 for (int l = -1; l <= 1; l++) {
-                                     if (distance(neighborColor.rgb, texture2D(uTexture, neighborUv + onePixel * vec2(float(k), float(l))).rgb) < 0.1) {
+                                     vec4 sampleColor = texture2D(uTexture, neighborUv + onePixel * vec2(float(k), float(l)));
+                                     if (sampleColor.a > 0.5 && distance(neighborColor.rgb, sampleColor.rgb) < 0.1) {
                                          currentCount += 1.0;
                                      }
                                 }
@@ -112,7 +169,10 @@ const fragmentShader = `
                         }
                     }
                 }
-                texColor.rgb = dominantColor;
+                 // Only overwrite if a dominant color was found
+                if (maxCount > 0.0) {
+                    texColor.rgb = dominantColor;
+                }
             }
         }
 
