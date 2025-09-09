@@ -89,7 +89,7 @@ const shaderMaterial = new THREE.ShaderMaterial({
         uColorMagenta: { value: new THREE.Color('#FF00FF') },
         uColorWhite: { value: new THREE.Color('#FFFFFF') },
         uColorBlack: { value: new THREE.Color('#000000') },
-        uThreshold: { value: 0.1 },
+        uThreshold: { value: 0.4 },
     },
     vertexShader,
     fragmentShader,
