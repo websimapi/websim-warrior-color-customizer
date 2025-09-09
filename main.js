@@ -43,56 +43,106 @@ const fragmentShader = `
         vec4 texColor = texture2D(uTexture, vUv);
 
         if (uCleanPixels) {
-            float originalAlpha = texColor.a;
-            if (originalAlpha > 0.1) {
-                // Count neighbors in a 5x5 grid to determine if a pixel is isolated.
-                int neighborCount = 0;
-                for (int i = -2; i <= 2; i++) {
-                    for (int j = -2; j <= 2; j++) {
+            // STEP 1: Isolated Pixel Removal
+            // An isolated pixel is one that is opaque but has no opaque neighbors
+            // in its 3x3 grid. This is very effective at removing single-pixel noise.
+            float neighborAlphaSum = 0.0;
+            for (int i = -1; i <= 1; i++) {
+                for (int j = -1; j <= 1; j++) {
+                    // Skip the center pixel (itself)
+                    if (i == 0 && j == 0) continue; 
+                    neighborAlphaSum += getAlpha(vUv + onePixel * vec2(float(i), float(j)));
+                }
+            }
+
+            // If the pixel is opaque but has no opaque neighbors, make it transparent.
+            if (texColor.a > 0.5 && neighborAlphaSum < 0.1) {
+                texColor.a = 0.0;
+            }
+
+            // STEP 2: Morphological Opening (Erode then Dilate)
+            // This is a standard image processing technique to remove small noise
+            // while preserving the shape of larger objects.
+            
+            // --- Erode Pass ---
+            // If any neighbor is transparent, this pixel becomes transparent.
+            float erodedAlpha = 1.0;
+            for (int i = -1; i <= 1; i++) {
+                for (int j = -1; j <= 1; j++) {
+                    if (getAlpha(vUv + onePixel * vec2(float(i), float(j))) < 0.5) {
+                        erodedAlpha = 0.0;
+                    }
+                }
+            }
+
+            // --- Dilate Pass ---
+            // If this pixel was transparent after erosion, check if any of its
+            // neighbors would have been opaque. If so, restore this pixel.
+            float finalAlpha = erodedAlpha;
+            if (erodedAlpha < 0.5) {
+                for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+                        vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
+                        
+                        // Check if the neighbor would have survived erosion
+                        float neighborErodedAlpha = 1.0;
+                        for(int ni = -1; ni <= 1; ni++) {
+                            for(int nj = -1; nj <= 1; nj++) {
+                                if(getAlpha(neighborUv + onePixel * vec2(float(ni), float(nj))) < 0.5) {
+                                    neighborErodedAlpha = 0.0;
+                                }
+                            }
+                        }
+                        
+                        if(neighborErodedAlpha > 0.5) {
+                            finalAlpha = 1.0;
+                        }
+                    }
+                }
+            }
+            
+            // Apply the cleaned alpha mask from both steps
+            texColor.a = min(texColor.a, finalAlpha);
+
+            // STEP 3: Clean up internal stray pixels (holes)
+            if (texColor.a > 0.5 && texture2D(uTexture, vUv).a < 0.1) {
+                vec3 dominantColor = vec3(0.0);
+                float maxCount = 0.0;
+                int contributingNeighbors = 0;
+                
+                // Find dominant color in the 3x3 neighborhood to fill holes
+                for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
                         if (i == 0 && j == 0) continue;
-                        if (getAlpha(vUv + onePixel * vec2(float(i), float(j))) > 0.5) {
-                            neighborCount++;
+                        
+                        vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
+                        vec4 neighborColor = texture2D(uTexture, neighborUv);
+                        
+                        // Consider only neighbors that are part of the main shape
+                        if (neighborColor.a > 0.5) {
+                            contributingNeighbors++;
+                            float currentCount = 0.0;
+                            // Check similarity with its own local neighbors to find a stable color region
+                            for (int k = -1; k <= 1; k++) {
+                                for (int l = -1; l <= 1; l++) {
+                                     vec4 sampleColor = texture2D(uTexture, neighborUv + onePixel * vec2(float(k), float(l)));
+                                     if (sampleColor.a > 0.5 && distance(neighborColor.rgb, sampleColor.rgb) < 0.1) {
+                                         currentCount += 1.0;
+                                     }
+                                }
+                            }
+                            if (currentCount > maxCount) {
+                                maxCount = currentCount;
+                                dominantColor = neighborColor.rgb;
+                            }
                         }
                     }
                 }
                 
-                // A 5x5 grid has 24 neighbors.
-                // A threshold of 4 is a good balance. It removes isolated pixels and small clusters
-                // up to 2x2, but preserves thin lines (like antennae or weapon tips)
-                // which will have at least 4-5 neighbors along the line.
-                if (neighborCount < 4) {
-                    texColor.a = 0.0;
-                }
-            }
-            
-            // This part handles internal holes (like white stray pixels inside the body).
-            if (texColor.a > 0.5) { // If the pixel survived the external cleanup
-                vec3 originalColor = texture2D(uTexture, vUv).rgb;
-                // Check if the original color is nearly white, which indicates a stray internal pixel.
-                if (distance(originalColor, vec3(1.0)) < 0.1) {
-                    vec3 dominantColor = vec3(0.0);
-                    float maxCount = 0.0;
-                    vec3 sumColor = vec3(0.0);
-                    int opaqueCount = 0;
-                    
-                    // Find the dominant non-white color in the 3x3 neighborhood.
-                    for (int i = -1; i <= 1; i++) {
-                        for (int j = -1; j <= 1; j++) {
-                             if (i == 0 && j == 0) continue;
-                            vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
-                            vec4 neighborSample = texture2D(uTexture, neighborUv);
-                            // Consider only non-white, opaque neighbors
-                            if (neighborSample.a > 0.5 && distance(neighborSample.rgb, vec3(1.0)) > 0.1) {
-                                sumColor += neighborSample.rgb;
-                                opaqueCount++;
-                            }
-                        }
-                    }
-                    
-                    // If we found any valid neighbors, replace the white pixel with their average color.
-                    if (opaqueCount > 0) {
-                        texColor.rgb = sumColor / float(opaqueCount);
-                    }
+                // Only fill the hole if it's surrounded by enough opaque pixels
+                // This prevents creating new stray pixels at the edges.
+                if (contributingNeighbors >= 3) {
+                    texColor.rgb = dominantColor;
                 }
             }
         }
