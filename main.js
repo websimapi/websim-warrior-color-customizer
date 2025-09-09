@@ -48,46 +48,45 @@ const fragmentShader = `
 
         vec3 finalColor = texColor.rgb;
 
-        float distRed = distance(texColor.rgb, PALETTE_RED);
-        float distGreen = distance(texColor.rgb, PALETTE_GREEN);
-        float distBlue = distance(texColor.rgb, PALETTE_BLUE);
-        float distYellow = distance(texColor.rgb, PALETTE_YELLOW);
-        float distCyan = distance(texColor.rgb, PALETTE_CYAN);
-        float distMagenta = distance(texColor.rgb, PALETTE_MAGENTA);
-        float distWhite = distance(texColor.rgb, PALETTE_WHITE);
-        float distBlack = distance(texColor.rgb, PALETTE_BLACK);
+        float dists[8];
+        dists[0] = distance(texColor.rgb, PALETTE_RED);
+        dists[1] = distance(texColor.rgb, PALETTE_GREEN);
+        dists[2] = distance(texColor.rgb, PALETTE_BLUE);
+        dists[3] = distance(texColor.rgb, PALETTE_YELLOW);
+        dists[4] = distance(texColor.rgb, PALETTE_CYAN);
+        dists[5] = distance(texColor.rgb, PALETTE_MAGENTA);
+        dists[6] = distance(texColor.rgb, PALETTE_WHITE);
+        dists[7] = distance(texColor.rgb, PALETTE_BLACK);
         
         float min_dist = 10.0;
         int min_idx = -1;
 
-        if (distRed < min_dist) { min_dist = distRed; min_idx = 0; }
-        if (distGreen < min_dist) { min_dist = distGreen; min_idx = 1; }
-        if (distBlue < min_dist) { min_dist = distBlue; min_idx = 2; }
-        if (distYellow < min_dist) { min_dist = distYellow; min_idx = 3; }
-        if (distCyan < min_dist) { min_dist = distCyan; min_idx = 4; }
-        if (distMagenta < min_dist) { min_dist = distMagenta; min_idx = 5; }
-        if (distWhite < min_dist) { min_dist = distWhite; min_idx = 6; }
-        if (distBlack < min_dist) { min_dist = distBlack; min_idx = 7; }
-
-        if (min_idx == 0 && min_dist < uThresholdRed) {
-            finalColor = uColorRed;
-        } else if (min_idx == 1 && min_dist < uThresholdGreen) {
-            finalColor = uColorGreen;
-        } else if (min_idx == 2 && min_dist < uThresholdBlue) {
-            finalColor = uColorBlue;
-        } else if (min_idx == 3 && min_dist < uThresholdYellow) {
-            finalColor = uColorYellow;
-        } else if (min_idx == 4 && min_dist < uThresholdCyan) {
-            finalColor = uColorCyan;
-        } else if (min_idx == 5 && min_dist < uThresholdMagenta) {
-            finalColor = uColorMagenta;
-        } else if (min_idx == 6 && min_dist < uThresholdWhite) {
-            finalColor = uColorWhite;
-        } else if (min_idx == 7 && min_dist < uThresholdBlack) {
-            finalColor = uColorBlack;
+        for (int i = 0; i < 8; i++) {
+            if (dists[i] < min_dist) {
+                min_dist = dists[i];
+                min_idx = i;
+            }
         }
 
-        gl_FragColor = vec4(finalColor, 1.0);
+        if (min_idx == 0) {
+            if (min_dist < uThresholdRed) finalColor = uColorRed;
+        } else if (min_idx == 1) {
+            if (min_dist < uThresholdGreen) finalColor = uColorGreen;
+        } else if (min_idx == 2) {
+            if (min_dist < uThresholdBlue) finalColor = uColorBlue;
+        } else if (min_idx == 3) {
+            if (min_dist < uThresholdYellow) finalColor = uColorYellow;
+        } else if (min_idx == 4) {
+            if (min_dist < uThresholdCyan) finalColor = uColorCyan;
+        } else if (min_idx == 5) {
+            if (min_dist < uThresholdMagenta) finalColor = uColorMagenta;
+        } else if (min_idx == 6) {
+            if (min_dist < uThresholdWhite) finalColor = uColorWhite;
+        } else if (min_idx == 7) {
+            if (min_dist < uThresholdBlack) finalColor = uColorBlack;
+        }
+
+        gl_FragColor = vec4(finalColor, texColor.a);
     }
 `;
 
@@ -197,9 +196,9 @@ for (const [id, uniformName] of Object.entries(thresholdMappings)) {
     });
 }
 
-// Remove old global slider logic
+// Remove old global slider logic if it's still there
 const oldSliderControl = document.querySelector('.slider-control');
-if (oldSliderControl) {
+if (oldSliderControl && oldSliderControl.style.display !== 'none') {
     oldSliderControl.style.display = 'none';
 }
 
