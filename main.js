@@ -65,17 +65,19 @@ const fragmentShader = `
                 // Only consider neighbors that are not transparent
                 vec3 consensusColor = vec3(0.0);
                 float count = 0.0;
+                float dist_sum = 0.0;
 
-                if (n_up.a > 0.5) { consensusColor += n_up.rgb; count += 1.0; }
-                if (n_down.a > 0.5) { consensusColor += n_down.rgb; count += 1.0; }
-                if (n_left.a > 0.5) { consensusColor += n_left.rgb; count += 1.0; }
-                if (n_right.a > 0.5) { consensusColor += n_right.rgb; count += 1.0; }
+                if (n_up.a > 0.5) { consensusColor += n_up.rgb; count += 1.0; dist_sum += distance(texColor.rgb, n_up.rgb); }
+                if (n_down.a > 0.5) { consensusColor += n_down.rgb; count += 1.0; dist_sum += distance(texColor.rgb, n_down.rgb); }
+                if (n_left.a > 0.5) { consensusColor += n_left.rgb; count += 1.0; dist_sum += distance(texColor.rgb, n_left.rgb); }
+                if (n_right.a > 0.5) { consensusColor += n_right.rgb; count += 1.0; dist_sum += distance(texColor.rgb, n_right.rgb); }
 
-                if (count > 2.0) { // If at least 3 neighbors agree
+                if (count > 2.0) { // If at least 3 neighbors are solid
                     consensusColor /= count;
-                    // If the current pixel is very different from its neighbors, it's a stray pixel.
-                    // Replace it with the average color of its neighbors.
-                    if (distance(texColor.rgb, consensusColor) > 0.5) {
+                    float avg_dist_from_neighbors = dist_sum / count;
+
+                    // If the current pixel is an "island" of color different from its neighbors
+                    if (avg_dist_from_neighbors > 0.1 && distance(n_up.rgb, n_down.rgb) < 0.1 && distance(n_left.rgb, n_right.rgb) < 0.1) {
                         texColor.rgb = consensusColor;
                     }
                 }
