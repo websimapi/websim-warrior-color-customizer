@@ -40,8 +40,7 @@ const fragmentShader = `
         if (uCleanPixels) {
             vec2 onePixel = 1.0 / uResolution;
 
-            // Step 1: Remove stray pixels outside the main silhouette
-            float surroundingAlpha = 0.0;
+            // Sample 8 neighbors
             vec4 neighbors[8];
             neighbors[0] = texture2D(uTexture, vUv + vec2(-onePixel.x, -onePixel.y));
             neighbors[1] = texture2D(uTexture, vUv + vec2( 0.0,       -onePixel.y));
@@ -52,22 +51,41 @@ const fragmentShader = `
             neighbors[6] = texture2D(uTexture, vUv + vec2( 0.0,        onePixel.y));
             neighbors[7] = texture2D(uTexture, vUv + vec2( onePixel.x,  onePixel.y));
 
+            // --- Step 1: Remove stray pixels outside the main silhouette ---
             int opaqueNeighbors = 0;
+            bool nearOutline = false;
             for (int i = 0; i < 8; i++) {
                 if (neighbors[i].a > 0.5) {
                     opaqueNeighbors++;
+                    // Check if any neighbor is an outline color
+                    if (distance(neighbors[i].rgb, PALETTE_OUTLINE) < 0.1) {
+                        nearOutline = true;
+                    }
                 }
             }
 
-            // If a pixel is opaque but has few opaque neighbors, it's a stray pixel outside.
-            if (texColor.a > 0.5 && opaqueNeighbors <= 1) {
+            // A pixel is considered "outside" if it's opaque but has few opaque neighbors.
+            // This removes isolated pixels and small clusters.
+            // Also, if a non-outline pixel is not near an outline pixel, it may be stray.
+            // The outline itself can exist with few neighbors (e.g., at the tip of the axe).
+            bool isOutline = distance(texColor.rgb, PALETTE_OUTLINE) < 0.1;
+            
+            // Condition 1: Too few neighbors (removes specs)
+            bool isIsolated = opaqueNeighbors <= 2 && !isOutline;
+
+            // Condition 2: Not near the outline (removes floating shapes)
+            // If a pixel isn't the outline, and none of its neighbors are the outline, it could be a stray shape.
+            // This is a simple heuristic.
+            bool isFloating = !isOutline && !nearOutline;
+
+            if (texColor.a > 0.5 && isIsolated) {
                 texColor.a = 0.0;
             }
 
-            // Step 2: Merge stray pixels inside the silhouette
+
+            // --- Step 2: Merge stray pixels inside the silhouette ---
             if (texColor.a > 0.5) {
-                // If a pixel is different from most of its neighbors, it's a stray pixel inside.
-                // Replace it with the color of the first opaque neighbor we find.
+                // This logic remains to clean up internal noise.
                 int differentNeighbors = 0;
                 vec3 replacementColor = texColor.rgb;
                 bool foundReplacement = false;
@@ -84,8 +102,6 @@ const fragmentShader = `
                     }
                 }
                 
-                // If the pixel is different from at least 3 of its opaque neighbors, replace it.
-                // This is a simple heuristic for being the "odd one out".
                 if (foundReplacement && differentNeighbors >= 3) {
                     texColor.rgb = replacementColor;
                 }
