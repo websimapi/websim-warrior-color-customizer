@@ -43,135 +43,56 @@ const fragmentShader = `
         vec4 texColor = texture2D(uTexture, vUv);
 
         if (uCleanPixels) {
-            // STEP 1: Perform a more aggressive morphological opening.
-            // This is two passes of erosion followed by two passes of dilation.
-            // It's effective at removing noise clusters up to 2x2 pixels.
-
-            // --- Pass 1: Erosion ---
-            float alpha1 = 1.0;
-            for (int i = -1; i <= 1; i++) {
-                for (int j = -1; j <= 1; j++) {
-                    if (getAlpha(vUv + onePixel * vec2(i, j)) < 0.5) {
-                        alpha1 = 0.0;
-                    }
-                }
-            }
-
-            // --- Pass 2: Erosion (on the result of Pass 1) ---
-            float alpha2 = 1.0;
-            if (alpha1 < 0.5) {
-                alpha2 = 0.0;
-            } else {
-                for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                        // Check if neighbor would have survived first erosion pass
-                        float neighborAlpha1 = 1.0;
-                        for(int ni = -1; ni <= 1; ni++) {
-                            for(int nj = -1; nj <= 1; nj++) {
-                                if(getAlpha(vUv + onePixel * vec2(i+ni, j+nj)) < 0.5) {
-                                    neighborAlpha1 = 0.0;
-                                }
-                            }
-                        }
-                        if (neighborAlpha1 < 0.5) {
-                            alpha2 = 0.0;
+            float originalAlpha = texColor.a;
+            if (originalAlpha > 0.1) {
+                // Count neighbors in a 5x5 grid to determine if a pixel is isolated.
+                int neighborCount = 0;
+                for (int i = -2; i <= 2; i++) {
+                    for (int j = -2; j <= 2; j++) {
+                        if (i == 0 && j == 0) continue;
+                        if (getAlpha(vUv + onePixel * vec2(float(i), float(j))) > 0.5) {
+                            neighborCount++;
                         }
                     }
                 }
-            }
-
-            // --- Pass 3: Dilation (on the result of Pass 2) ---
-            float alpha3 = 0.0;
-            if(alpha2 > 0.5) {
-                alpha3 = 1.0;
-            } else {
-                for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                         // Check if neighbor would have survived second erosion pass
-                        vec2 neighborUv = vUv + onePixel * vec2(i, j);
-                        float n_alpha1 = 1.0;
-                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                           if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) n_alpha1 = 0.0;
-                        }
-
-                        if(n_alpha1 > 0.5) {
-                            float n_alpha2 = 1.0;
-                            for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                                float nn_alpha1 = 1.0;
-                                for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
-                                    if(getAlpha(neighborUv + onePixel * vec2(ni+nni, nj+nnj)) < 0.5) nn_alpha1 = 0.0;
-                                }
-                                if(nn_alpha1 < 0.5) n_alpha2 = 0.0;
-                            }
-                            if(n_alpha2 > 0.5) alpha3 = 1.0;
-                        }
-                    }
-                }
-            }
-
-             // --- Pass 4: Dilation (on the result of Pass 3) ---
-            float finalAlpha = 0.0;
-            if(alpha3 > 0.5) {
-                finalAlpha = 1.0;
-            } else {
-                // This is the most complex part. We must check if any neighbor would have survived Pass 3.
-                // A full recalculation is too expensive. We can approximate by checking if any neighbor
-                // would have survived Pass 2, which is a strong indicator.
-                 for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                        vec2 neighborUv = vUv + onePixel * vec2(i, j);
-                        float n_alpha1 = 1.0;
-                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                           if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) n_alpha1 = 0.0;
-                        }
-                        if(n_alpha1 > 0.5) {
-                            float n_alpha2 = 1.0;
-                            for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                                float nn_alpha1 = 1.0;
-                                for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
-                                    if(getAlpha(neighborUv + onePixel * vec2(ni+nni, nj+nnj)) < 0.5) nn_alpha1 = 0.0;
-                                }
-                                if(nn_alpha1 < 0.5) n_alpha2 = 0.0;
-                            }
-                            if(n_alpha2 > 0.5) finalAlpha = 1.0; // If neighbor survives double erosion, dilate.
-                        }
-                    }
-                }
-            }
-
-            // Apply the cleaned alpha mask
-            texColor.a = finalAlpha;
-            
-            // STEP 2: Clean up internal stray pixels using the new clean mask
-            if (texColor.a > 0.5) {
-                vec3 dominantColor = vec3(0.0);
-                float maxCount = 0.0;
                 
-                // Find dominant color in 3x3 neighborhood to fill holes
-                for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                        vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
-                        vec4 neighborColor = texture2D(uTexture, neighborUv);
-                        if (neighborColor.a > 0.5) {
-                            float currentCount = 0.0;
-                            for (int k = -1; k <= 1; k++) {
-                                for (int l = -1; l <= 1; l++) {
-                                     vec4 sampleColor = texture2D(uTexture, neighborUv + onePixel * vec2(float(k), float(l)));
-                                     if (sampleColor.a > 0.5 && distance(neighborColor.rgb, sampleColor.rgb) < 0.1) {
-                                         currentCount += 1.0;
-                                     }
-                                }
-                            }
-                            if (currentCount > maxCount) {
-                                maxCount = currentCount;
-                                dominantColor = neighborColor.rgb;
+                // A 5x5 grid has 24 neighbors.
+                // A threshold of 4 is a good balance. It removes isolated pixels and small clusters
+                // up to 2x2, but preserves thin lines (like antennae or weapon tips)
+                // which will have at least 4-5 neighbors along the line.
+                if (neighborCount < 4) {
+                    texColor.a = 0.0;
+                }
+            }
+            
+            // This part handles internal holes (like white stray pixels inside the body).
+            if (texColor.a > 0.5) { // If the pixel survived the external cleanup
+                vec3 originalColor = texture2D(uTexture, vUv).rgb;
+                // Check if the original color is nearly white, which indicates a stray internal pixel.
+                if (distance(originalColor, vec3(1.0)) < 0.1) {
+                    vec3 dominantColor = vec3(0.0);
+                    float maxCount = 0.0;
+                    vec3 sumColor = vec3(0.0);
+                    int opaqueCount = 0;
+                    
+                    // Find the dominant non-white color in the 3x3 neighborhood.
+                    for (int i = -1; i <= 1; i++) {
+                        for (int j = -1; j <= 1; j++) {
+                             if (i == 0 && j == 0) continue;
+                            vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
+                            vec4 neighborSample = texture2D(uTexture, neighborUv);
+                            // Consider only non-white, opaque neighbors
+                            if (neighborSample.a > 0.5 && distance(neighborSample.rgb, vec3(1.0)) > 0.1) {
+                                sumColor += neighborSample.rgb;
+                                opaqueCount++;
                             }
                         }
                     }
-                }
-                 // Only overwrite if a dominant color was found
-                if (maxCount > 0.0) {
-                    texColor.rgb = dominantColor;
+                    
+                    // If we found any valid neighbors, replace the white pixel with their average color.
+                    if (opaqueCount > 0) {
+                        texColor.rgb = sumColor / float(opaqueCount);
+                    }
                 }
             }
         }
