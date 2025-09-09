@@ -15,17 +15,20 @@ const fragmentShader = `
     uniform vec3 uColorFace;
     uniform vec3 uColorArmour;
     uniform vec3 uColorTrim;
+    uniform vec3 uColorHair;
     uniform vec3 uColorOutline;
 
     uniform float uThresholdFace;
     uniform float uThresholdArmour;
     uniform float uThresholdTrim;
+    uniform float uThresholdHair;
     uniform float uThresholdOutline;
 
     // Palette based on the new source image
     const vec3 PALETTE_FACE    = vec3(1.0, 1.0, 0.0); // Yellow
     const vec3 PALETTE_ARMOUR  = vec3(0.0, 0.0, 1.0); // Blue
     const vec3 PALETTE_TRIM    = vec3(0.0, 1.0, 0.0); // Green
+    const vec3 PALETTE_HAIR    = vec3(1.0, 0.0, 0.0); // Red
     const vec3 PALETTE_OUTLINE = vec3(0.0, 0.0, 0.0); // Black
 
     void main() {
@@ -37,22 +40,24 @@ const fragmentShader = `
 
         vec3 finalColor = texColor.rgb;
 
-        vec3 colors[4];
+        vec3 colors[5];
         colors[0] = PALETTE_FACE;
         colors[1] = PALETTE_ARMOUR;
         colors[2] = PALETTE_TRIM;
-        colors[3] = PALETTE_OUTLINE;
+        colors[3] = PALETTE_HAIR;
+        colors[4] = PALETTE_OUTLINE;
 
-        float dists[4];
+        float dists[5];
         dists[0] = distance(texColor.rgb, colors[0]);
         dists[1] = distance(texColor.rgb, colors[1]);
         dists[2] = distance(texColor.rgb, colors[2]);
         dists[3] = distance(texColor.rgb, colors[3]);
+        dists[4] = distance(texColor.rgb, colors[4]);
         
         float min_dist = 10.0;
         int min_idx = -1;
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 5; i++) {
             if (dists[i] < min_dist) {
                 min_dist = dists[i];
                 min_idx = i;
@@ -66,6 +71,8 @@ const fragmentShader = `
         } else if (min_idx == 2) {
             if (min_dist < uThresholdTrim) finalColor = uColorTrim;
         } else if (min_idx == 3) {
+            if (min_dist < uThresholdHair) finalColor = uColorHair;
+        } else if (min_idx == 4) {
             if (min_dist < uThresholdOutline) finalColor = uColorOutline;
         }
 
@@ -95,10 +102,12 @@ const shaderMaterial = new THREE.ShaderMaterial({
         uColorFace: { value: new THREE.Color('#FFFF00') },
         uColorArmour: { value: new THREE.Color('#0000FF') },
         uColorTrim: { value: new THREE.Color('#00FF00') },
+        uColorHair: { value: new THREE.Color('#FF0000') },
         uColorOutline: { value: new THREE.Color('#000000') },
         uThresholdFace: { value: 0.4 },
         uThresholdArmour: { value: 0.4 },
         uThresholdTrim: { value: 0.4 },
+        uThresholdHair: { value: 0.4 },
         uThresholdOutline: { value: 0.4 },
     },
     vertexShader,
@@ -133,6 +142,7 @@ const colorMappings = {
     'color-face': 'uColorFace',
     'color-armour': 'uColorArmour',
     'color-trim': 'uColorTrim',
+    'color-hair': 'uColorHair',
     'color-outline': 'uColorOutline',
 };
 
@@ -148,6 +158,7 @@ const thresholdMappings = {
     'threshold-face': 'uThresholdFace',
     'threshold-armour': 'uThresholdArmour',
     'threshold-trim': 'uThresholdTrim',
+    'threshold-hair': 'uThresholdHair',
     'threshold-outline': 'uThresholdOutline',
 };
 
