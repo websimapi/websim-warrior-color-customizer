@@ -38,110 +38,170 @@ const fragmentShader = `
         return texture2D(uTexture, uv).a;
     }
 
+    bool isBlackOutline(vec2 uv) {
+        vec4 color = texture2D(uTexture, uv);
+        if (color.a < 0.1) return false;
+        return distance(color.rgb, PALETTE_OUTLINE) < 0.1;
+    }
+
+    bool isInsideOutline(vec2 uv) {
+        vec2 onePixel = 1.0 / uResolution;
+        
+        // Multi-directional ray casting to determine if we're inside the outline
+        int intersections = 0;
+        
+        // Cast rays in 8 directions and count outline intersections
+        vec2 directions[8];
+        directions[0] = vec2(1.0, 0.0);   // Right
+        directions[1] = vec2(-1.0, 0.0);  // Left
+        directions[2] = vec2(0.0, 1.0);   // Up
+        directions[3] = vec2(0.0, -1.0);  // Down
+        directions[4] = vec2(1.0, 1.0);   // Diagonal UR
+        directions[5] = vec2(-1.0, -1.0); // Diagonal DL
+        directions[6] = vec2(1.0, -1.0);  // Diagonal DR
+        directions[7] = vec2(-1.0, 1.0);  // Diagonal UL
+        
+        for(int dir = 0; dir < 8; dir++) {
+            vec2 direction = normalize(directions[dir]);
+            int rayIntersections = 0;
+            
+            // Cast ray in this direction
+            for(int step = 1; step < 100; step++) {
+                vec2 rayPos = uv + direction * onePixel * float(step);
+                
+                // Stop if we're outside the texture bounds
+                if(rayPos.x < 0.0 || rayPos.x > 1.0 || rayPos.y < 0.0 || rayPos.y > 1.0) {
+                    break;
+                }
+                
+                // Check for outline intersection
+                if(isBlackOutline(rayPos)) {
+                    rayIntersections++;
+                    // Skip ahead a bit to avoid multiple hits on thick outlines
+                    step += 2;
+                }
+            }
+            
+            // If odd number of intersections, we're inside for this direction
+            if(rayIntersections % 2 == 1) {
+                intersections++;
+            }
+        }
+        
+        // If majority of rays indicate we're inside, consider us inside
+        return intersections >= 4;
+    }
+
     void main() {
         vec2 onePixel = 1.0 / uResolution;
         vec4 texColor = texture2D(uTexture, vUv);
 
+        // OUTLINE DETECTION AND MASKING
+        // First check if this pixel should exist based on outline detection
+        if (texColor.a > 0.1) {
+            // If it's not the black outline itself, check if it's inside the outline
+            if (!isBlackOutline(vUv)) {
+                if (!isInsideOutline(vUv)) {
+                    // Pixel is outside the outline, make it transparent
+                    discard;
+                }
+            }
+        }
+
         if (uCleanPixels) {
-            // STEP 1: Perform a morphological opening (erosion then dilation)
-            // We use 3 passes of erosion to remove noise, then 3 passes of dilation
-            // to restore the original shape. This is effective at removing small islands of pixels.
-            
-            // --- EROSION ---
-            float alpha = getAlpha(vUv);
+            // STEP 1: Perform a more aggressive morphological opening.
+            // This is two passes of erosion followed by two passes of dilation.
+            // It's effective at removing noise clusters up to 2x2 pixels.
 
-            // Pass 1
-            float eroded1 = 1.0;
-            if (alpha < 0.5) {
-                eroded1 = 0.0;
-            } else {
-                for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
-                    if (getAlpha(vUv + onePixel * vec2(i, j)) < 0.5) eroded1 = 0.0;
-                }
-            }
-
-            // Pass 2
-            float eroded2 = 1.0;
-            if (eroded1 < 0.5) {
-                eroded2 = 0.0;
-            } else {
-                for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
-                    vec2 neighborUv = vUv + onePixel * vec2(i, j);
-                    bool neighborSurvived = true;
-                    for (int ni = -1; ni <= 1; ni++) for (int nj = -1; nj <= 1; nj++) {
-                        if (getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) neighborSurvived = false;
+            // --- Pass 1: Erosion ---
+            float alpha1 = 1.0;
+            for (int i = -1; i <= 1; i++) {
+                for (int j = -1; j <= 1; j++) {
+                    if (getAlpha(vUv + onePixel * vec2(i, j)) < 0.5) {
+                        alpha1 = 0.0;
                     }
-                    if (!neighborSurvived) eroded2 = 0.0;
                 }
             }
 
-            // Pass 3
-            float eroded3 = 1.0;
-            if (eroded2 < 0.5) {
-                eroded3 = 0.0;
+            // --- Pass 2: Erosion (on the result of Pass 1) ---
+            float alpha2 = 1.0;
+            if (alpha1 < 0.5) {
+                alpha2 = 0.0;
             } else {
-                // This is a simplified check. A full check is too expensive.
-                // We check if the immediate 3x3 neighbors would have survived two passes.
-                // This is a good approximation.
-                for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
-                     vec2 neighborUv = vUv + onePixel * vec2(i, j);
-                     // Check if neighbor would survive pass 2
-                     bool neighborSurvivedP2 = true;
-                     for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                         vec2 n2_uv = neighborUv + onePixel * vec2(ni, nj);
-                         bool n2_survivedP1 = true;
-                         for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
-                            if(getAlpha(n2_uv + onePixel * vec2(nni, nnj)) < 0.5) n2_survivedP1 = false;
-                         }
-                         if(!n2_survivedP1) neighborSurvivedP2 = false;
-                     }
-                     if(!neighborSurvivedP2) eroded3 = 0.0;
-                }
-            }
-
-            // --- DILATION ---
-            // Now we dilate the result of the erosion
-            
-            // Pass 1
-            float dilated1 = 0.0;
-            if (eroded3 > 0.5) {
-                dilated1 = 1.0;
-            } else {
-                for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
-                    // Check if neighbor would have survived erosion
-                    // Using the same approximation as above
-                    vec2 neighborUv = vUv + onePixel * vec2(i, j);
-                    if (texture2D(uTexture, neighborUv).a > 0.5) { // Optimization: quick check
-                        bool neighborSurvivedP2 = true;
-                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                             vec2 n2_uv = neighborUv + onePixel * vec2(ni, nj);
-                             bool n2_survivedP1 = true;
-                             for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
-                                if(getAlpha(n2_uv + onePixel * vec2(nni, nnj)) < 0.5) n2_survivedP1 = false;
-                             }
-                             if(!n2_survivedP1) neighborSurvivedP2 = false;
+                for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+                        // Check if neighbor would have survived first erosion pass
+                        float neighborAlpha1 = 1.0;
+                        for(int ni = -1; ni <= 1; ni++) {
+                            for(int nj = -1; nj <= 1; nj++) {
+                                if(getAlpha(vUv + onePixel * vec2(i+ni, j+nj)) < 0.5) {
+                                    neighborAlpha1 = 0.0;
+                                }
+                            }
                         }
-                        if(neighborSurvivedP2) dilated1 = 1.0;
+                        if (neighborAlpha1 < 0.5) {
+                            alpha2 = 0.0;
+                        }
                     }
                 }
             }
-            
-            // Pass 2 & 3 (Simplified for performance)
-            // A full multi-pass dilation is very expensive. We can approximate by checking a larger area.
+
+            // --- Pass 3: Dilation (on the result of Pass 2) ---
+            float alpha3 = 0.0;
+            if(alpha2 > 0.5) {
+                alpha3 = 1.0;
+            } else {
+                for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+                         // Check if neighbor would have survived second erosion pass
+                        vec2 neighborUv = vUv + onePixel * vec2(i, j);
+                        float n_alpha1 = 1.0;
+                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                           if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) n_alpha1 = 0.0;
+                        }
+
+                        if(n_alpha1 > 0.5) {
+                            float n_alpha2 = 1.0;
+                            for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                                float nn_alpha1 = 1.0;
+                                for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
+                                    if(getAlpha(neighborUv + onePixel * vec2(ni+nni, nj+nnj)) < 0.5) nn_alpha1 = 0.0;
+                                }
+                                if(nn_alpha1 < 0.5) n_alpha2 = 0.0;
+                            }
+                            if(n_alpha2 > 0.5) alpha3 = 1.0;
+                        }
+                    }
+                }
+            }
+
+             // --- Pass 4: Dilation (on the result of Pass 3) ---
             float finalAlpha = 0.0;
-            if (dilated1 > 0.5) {
+            if(alpha3 > 0.5) {
                 finalAlpha = 1.0;
             } else {
-                for (int i = -2; i <= 2; i++) for (int j = -2; j <= 2; j++) {
-                    if (i == 0 && j == 0) continue;
-                    vec2 neighborUv = vUv + onePixel * vec2(i, j);
-                     if (texture2D(uTexture, neighborUv).a > 0.5) {
-                         bool neighborSurvivedP1 = true;
-                         for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                             if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) neighborSurvivedP1 = false;
-                         }
-                         if(neighborSurvivedP1) finalAlpha = 1.0; // If a nearby pixel survives 1 erosion, it's likely part of main body
-                     }
+                // This is the most complex part. We must check if any neighbor would have survived Pass 3.
+                // A full recalculation is too expensive. We can approximate by checking if any neighbor
+                // would have survived Pass 2, which is a strong indicator.
+                 for (int i = -1; i <= 1; i++) {
+                    for (int j = -1; j <= 1; j++) {
+                        vec2 neighborUv = vUv + onePixel * vec2(i, j);
+                        float n_alpha1 = 1.0;
+                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                           if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) n_alpha1 = 0.0;
+                        }
+                        if(n_alpha1 > 0.5) {
+                            float n_alpha2 = 1.0;
+                            for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
+                                float nn_alpha1 = 1.0;
+                                for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
+                                    if(getAlpha(neighborUv + onePixel * vec2(ni+nni, nj+nnj)) < 0.5) nn_alpha1 = 0.0;
+                                }
+                                if(nn_alpha1 < 0.5) n_alpha2 = 0.0;
+                            }
+                            if(n_alpha2 > 0.5) finalAlpha = 1.0; // If neighbor survives double erosion, dilate.
+                        }
+                    }
                 }
             }
 
