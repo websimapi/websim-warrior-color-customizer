@@ -35,209 +35,93 @@ const fragmentShader = `
     const vec3 PALETTE_OUTLINE = vec3(0.0, 0.0, 0.0); // Black
 
     float getAlpha(vec2 uv) {
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+            return 0.0;
+        }
         return texture2D(uTexture, uv).a;
     }
 
-    bool isBlackOutline(vec2 uv) {
-        vec4 color = texture2D(uTexture, uv);
-        if (color.a < 0.1) return false;
-        return distance(color.rgb, PALETTE_OUTLINE) < 0.1;
-    }
-
-    bool isInsideOutline(vec2 uv) {
-        vec2 onePixel = 1.0 / uResolution;
-        
-        // Multi-directional ray casting to determine if we're inside the outline
-        int intersections = 0;
-        
-        // Cast rays in 8 directions and count outline intersections
-        vec2 directions[8];
-        directions[0] = vec2(1.0, 0.0);   // Right
-        directions[1] = vec2(-1.0, 0.0);  // Left
-        directions[2] = vec2(0.0, 1.0);   // Up
-        directions[3] = vec2(0.0, -1.0);  // Down
-        directions[4] = vec2(1.0, 1.0);   // Diagonal UR
-        directions[5] = vec2(-1.0, -1.0); // Diagonal DL
-        directions[6] = vec2(1.0, -1.0);  // Diagonal DR
-        directions[7] = vec2(-1.0, 1.0);  // Diagonal UL
-        
-        for(int dir = 0; dir < 8; dir++) {
-            vec2 direction = normalize(directions[dir]);
-            int rayIntersections = 0;
-            
-            // Cast ray in this direction
-            for(int step = 1; step < 100; step++) {
-                vec2 rayPos = uv + direction * onePixel * float(step);
-                
-                // Stop if we're outside the texture bounds
-                if(rayPos.x < 0.0 || rayPos.x > 1.0 || rayPos.y < 0.0 || rayPos.y > 1.0) {
-                    break;
-                }
-                
-                // Check for outline intersection
-                if(isBlackOutline(rayPos)) {
-                    rayIntersections++;
-                    // Skip ahead a bit to avoid multiple hits on thick outlines
-                    step += 2;
-                }
-            }
-            
-            // If odd number of intersections, we're inside for this direction
-            if(rayIntersections % 2 == 1) {
-                intersections++;
-            }
+    bool isOutline(vec2 uv) {
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+            return false;
         }
-        
-        // If majority of rays indicate we're inside, consider us inside
-        return intersections >= 4;
+        vec4 color = texture2D(uTexture, uv);
+        return color.a > 0.5 && distance(color.rgb, PALETTE_OUTLINE) < 0.1;
     }
 
     void main() {
         vec2 onePixel = 1.0 / uResolution;
         vec4 texColor = texture2D(uTexture, vUv);
 
-        // OUTLINE DETECTION AND MASKING
-        // First check if this pixel should exist based on outline detection
-        if (texColor.a > 0.1) {
-            // If it's not the black outline itself, check if it's inside the outline
-            if (!isBlackOutline(vUv)) {
-                if (!isInsideOutline(vUv)) {
-                    // Pixel is outside the outline, make it transparent
-                    discard;
-                }
-            }
-        }
-
         if (uCleanPixels) {
-            // STEP 1: Perform a more aggressive morphological opening.
-            // This is two passes of erosion followed by two passes of dilation.
-            // It's effective at removing noise clusters up to 2x2 pixels.
-
-            // --- Pass 1: Erosion ---
-            float alpha1 = 1.0;
-            for (int i = -1; i <= 1; i++) {
-                for (int j = -1; j <= 1; j++) {
-                    if (getAlpha(vUv + onePixel * vec2(i, j)) < 0.5) {
-                        alpha1 = 0.0;
-                    }
-                }
-            }
-
-            // --- Pass 2: Erosion (on the result of Pass 1) ---
-            float alpha2 = 1.0;
-            if (alpha1 < 0.5) {
-                alpha2 = 0.0;
-            } else {
-                for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                        // Check if neighbor would have survived first erosion pass
-                        float neighborAlpha1 = 1.0;
-                        for(int ni = -1; ni <= 1; ni++) {
-                            for(int nj = -1; nj <= 1; nj++) {
-                                if(getAlpha(vUv + onePixel * vec2(i+ni, j+nj)) < 0.5) {
-                                    neighborAlpha1 = 0.0;
-                                }
-                            }
-                        }
-                        if (neighborAlpha1 < 0.5) {
-                            alpha2 = 0.0;
-                        }
-                    }
-                }
-            }
-
-            // --- Pass 3: Dilation (on the result of Pass 2) ---
-            float alpha3 = 0.0;
-            if(alpha2 > 0.5) {
-                alpha3 = 1.0;
-            } else {
-                for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                         // Check if neighbor would have survived second erosion pass
-                        vec2 neighborUv = vUv + onePixel * vec2(i, j);
-                        float n_alpha1 = 1.0;
-                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                           if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) n_alpha1 = 0.0;
-                        }
-
-                        if(n_alpha1 > 0.5) {
-                            float n_alpha2 = 1.0;
-                            for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                                float nn_alpha1 = 1.0;
-                                for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
-                                    if(getAlpha(neighborUv + onePixel * vec2(ni+nni, nj+nnj)) < 0.5) nn_alpha1 = 0.0;
-                                }
-                                if(nn_alpha1 < 0.5) n_alpha2 = 0.0;
-                            }
-                            if(n_alpha2 > 0.5) alpha3 = 1.0;
-                        }
-                    }
-                }
-            }
-
-             // --- Pass 4: Dilation (on the result of Pass 3) ---
-            float finalAlpha = 0.0;
-            if(alpha3 > 0.5) {
-                finalAlpha = 1.0;
-            } else {
-                // This is the most complex part. We must check if any neighbor would have survived Pass 3.
-                // A full recalculation is too expensive. We can approximate by checking if any neighbor
-                // would have survived Pass 2, which is a strong indicator.
-                 for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                        vec2 neighborUv = vUv + onePixel * vec2(i, j);
-                        float n_alpha1 = 1.0;
-                        for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                           if(getAlpha(neighborUv + onePixel * vec2(ni, nj)) < 0.5) n_alpha1 = 0.0;
-                        }
-                        if(n_alpha1 > 0.5) {
-                            float n_alpha2 = 1.0;
-                            for(int ni = -1; ni <= 1; ni++) for(int nj = -1; nj <= 1; nj++) {
-                                float nn_alpha1 = 1.0;
-                                for(int nni = -1; nni <= 1; nni++) for(int nnj = -1; nnj <= 1; nnj++) {
-                                    if(getAlpha(neighborUv + onePixel * vec2(ni+nni, nj+nnj)) < 0.5) nn_alpha1 = 0.0;
-                                }
-                                if(nn_alpha1 < 0.5) n_alpha2 = 0.0;
-                            }
-                            if(n_alpha2 > 0.5) finalAlpha = 1.0; // If neighbor survives double erosion, dilate.
-                        }
-                    }
-                }
-            }
-
-            // Apply the cleaned alpha mask
-            texColor.a = finalAlpha;
-            
-            // STEP 2: Clean up internal stray pixels using the new clean mask
+            // STEP 1: Edge detection based cleaning.
+            // If a pixel is not part of the character, it remains transparent.
+            // If it is, check if it's "outside" the main outline.
+            // A pixel is "outside" if we can trace a line from it to the image border
+            // without hitting a black outline pixel.
             if (texColor.a > 0.5) {
-                vec3 dominantColor = vec3(0.0);
-                float maxCount = 0.0;
-                
-                // Find dominant color in 3x3 neighborhood to fill holes
-                for (int i = -1; i <= 1; i++) {
-                    for (int j = -1; j <= 1; j++) {
-                        vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
-                        vec4 neighborColor = texture2D(uTexture, neighborUv);
-                        if (neighborColor.a > 0.5) {
-                            float currentCount = 0.0;
-                            for (int k = -1; k <= 1; k++) {
-                                for (int l = -1; l <= 1; l++) {
-                                     vec4 sampleColor = texture2D(uTexture, neighborUv + onePixel * vec2(float(k), float(l)));
-                                     if (sampleColor.a > 0.5 && distance(neighborColor.rgb, sampleColor.rgb) < 0.1) {
-                                         currentCount += 1.0;
-                                     }
-                                }
-                            }
-                            if (currentCount > maxCount) {
-                                maxCount = currentCount;
-                                dominantColor = neighborColor.rgb;
-                            }
-                        }
+                const int steps = 150; // Max trace distance
+                bool isOutside = false;
+
+                // Trace Right
+                for (int i = 1; i < steps; i++) {
+                    vec2 currentUv = vUv + vec2(float(i) * onePixel.x, 0.0);
+                    if (currentUv.x > 1.0) { isOutside = true; break; }
+                    if (isOutline(currentUv)) { break; }
+                }
+                // Trace Left
+                if (!isOutside) {
+                    for (int i = 1; i < steps; i++) {
+                        vec2 currentUv = vUv - vec2(float(i) * onePixel.x, 0.0);
+                        if (currentUv.x < 0.0) { isOutside = true; break; }
+                        if (isOutline(currentUv)) { break; }
                     }
                 }
-                 // Only overwrite if a dominant color was found
-                if (maxCount > 0.0) {
-                    texColor.rgb = dominantColor;
+                // Trace Up
+                if (!isOutside) {
+                     for (int i = 1; i < steps; i++) {
+                        vec2 currentUv = vUv + vec2(0.0, float(i) * onePixel.y);
+                        if (currentUv.y > 1.0) { isOutside = true; break; }
+                        if (isOutline(currentUv)) { break; }
+                    }
+                }
+                // Trace Down
+                if (!isOutside) {
+                    for (int i = 1; i < steps; i++) {
+                        vec2 currentUv = vUv - vec2(0.0, float(i) * onePixel.y);
+                        if (currentUv.y < 0.0) { isOutside = true; break; }
+                        if (isOutline(currentUv)) { break; }
+                    }
+                }
+
+                if (isOutside) {
+                    texColor.a = 0.0;
+                }
+            }
+            
+            // STEP 2: Clean up internal stray pixels (small holes) using a simple majority filter.
+            // This runs on pixels that survived the "outside" check.
+            if (texColor.a > 0.5) {
+                // If a colored pixel is surrounded by mostly transparent pixels, it might be an internal artifact.
+                // A better approach for internal pixels is filling holes.
+                // If the original pixel is almost white (artifact), fill it with a neighbor's color.
+                if (distance(texColor.rgb, vec3(1.0)) < 0.1) {
+                    vec3 dominantColor = vec3(0.0);
+                    float maxCount = 0.0;
+                    vec3 finalColor = texColor.rgb;
+
+                    for (int i = -1; i <= 1; i++) {
+                        for (int j = -1; j <= 1; j++) {
+                           if (i == 0 && j == 0) continue;
+                           vec2 neighborUv = vUv + onePixel * vec2(float(i), float(j));
+                           vec4 neighborColor = texture2D(uTexture, neighborUv);
+                           if (neighborColor.a > 0.5 && distance(neighborColor.rgb, vec3(1.0)) > 0.1) { // not an artifact pixel
+                               finalColor = neighborColor.rgb; // just grab first valid neighbor
+                               break;
+                           }
+                        }
+                    }
+                    texColor.rgb = finalColor;
                 }
             }
         }
