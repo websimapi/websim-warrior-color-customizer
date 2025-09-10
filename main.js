@@ -54,47 +54,47 @@ const fragmentShader = `
         vec4 texColor = texture2D(uTexture, vUv);
 
         if (uCleanPixels) {
-            // STEP 1: Edge detection based cleaning.
-            // If a pixel is not part of the character, it remains transparent.
-            // If it is, check if it's "outside" the main outline.
-            // A pixel is "outside" if we can trace a line from it to the image border
-            // without hitting a black outline pixel.
             if (texColor.a > 0.5) {
-                const int steps = 150; // Max trace distance
-                bool isOutside = false;
+                // To determine if a pixel is "outside", we trace in 8 directions.
+                // If a trace reaches the edge of the texture without hitting an outline pixel,
+                // we count it as an "escape route". Pixels with many escape routes are
+                // considered outside the character.
+                const int max_steps = 500; // Max trace distance
+                int escape_routes = 0;
 
-                // Trace Right
-                for (int i = 1; i < steps; i++) {
-                    vec2 currentUv = vUv + vec2(float(i) * onePixel.x, 0.0);
-                    if (currentUv.x > 1.0) { isOutside = true; break; }
-                    if (isOutline(currentUv)) { break; }
-                }
-                // Trace Left
-                if (!isOutside) {
-                    for (int i = 1; i < steps; i++) {
-                        vec2 currentUv = vUv - vec2(float(i) * onePixel.x, 0.0);
-                        if (currentUv.x < 0.0) { isOutside = true; break; }
-                        if (isOutline(currentUv)) { break; }
+                // Directions: R, L, D, U, DR, DL, UR, UL
+                vec2 directions[8];
+                directions[0] = vec2(1.0, 0.0);
+                directions[1] = vec2(-1.0, 0.0);
+                directions[2] = vec2(0.0, -1.0);
+                directions[3] = vec2(0.0, 1.0);
+                directions[4] = vec2(1.0, -1.0);
+                directions[5] = vec2(-1.0, -1.0);
+                directions[6] = vec2(1.0, 1.0);
+                directions[7] = vec2(-1.0, 1.0);
+                
+                for (int d = 0; d < 8; d++) {
+                    bool blocked = false;
+                    for (int i = 1; i < max_steps; i++) {
+                        vec2 currentUv = vUv + directions[d] * float(i) * onePixel;
+
+                        if (currentUv.x < 0.0 || currentUv.x > 1.0 || currentUv.y < 0.0 || currentUv.y > 1.0) {
+                            break; // Reached edge, not blocked.
+                        }
+                        if (isOutline(currentUv)) {
+                            blocked = true;
+                            break; // Hit an outline, blocked.
+                        }
                     }
-                }
-                // Trace Up
-                if (!isOutside) {
-                     for (int i = 1; i < steps; i++) {
-                        vec2 currentUv = vUv + vec2(0.0, float(i) * onePixel.y);
-                        if (currentUv.y > 1.0) { isOutside = true; break; }
-                        if (isOutline(currentUv)) { break; }
-                    }
-                }
-                // Trace Down
-                if (!isOutside) {
-                    for (int i = 1; i < steps; i++) {
-                        vec2 currentUv = vUv - vec2(0.0, float(i) * onePixel.y);
-                        if (currentUv.y < 0.0) { isOutside = true; break; }
-                        if (isOutline(currentUv)) { break; }
+                    if (!blocked) {
+                        escape_routes++;
                     }
                 }
 
-                if (isOutside) {
+                // If a pixel has many "escape routes", it's likely outside.
+                // The threshold (e.g., 4) can be tweaked. 
+                // A higher value is more strict about what it removes.
+                if (escape_routes > 4) {
                     texColor.a = 0.0;
                 }
             }
